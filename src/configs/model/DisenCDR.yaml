@@ -1,0 +1,11 @@
+hidden_dim: 64
+feature_dim: 64
+dropout: 0.1
+leakey: 0.2
+rate: 0.5
+beta: 0.01
+GNN: 2
+
+lr: [0.0001, 0.0005, 0.001, 0.005]
+
+hyper_parameters: ["lr"]

@@ -1,0 +1,13 @@
+# Common Features
+USER_ID_FIELD: userID
+ITEM_ID_FIELD: itemID
+DOMAIN_FIELD: domain
+#RATING_FIELD: rating
+TIME_FIELD: timestamp
+
+filter_out_cod_start_users: True
+
+source_inter_file_name: 'source.inter'
+target_inter_file_name: 'target.inter'
+
+field_separator: "\t"

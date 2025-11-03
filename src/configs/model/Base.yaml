@@ -1,0 +1,10 @@
+loss_type: bpr
+dropout: 0.2
+mlp_layers: 1
+
+feature_dim: [32, 64, 128]
+learning_rate: [0.001, 0.0005]
+mlp_hidden_dim: [64, 128]
+
+# hyperparameter search space
+hyper_parameters: ["feature_dim", "learning_rate", "mlp_hidden_dim"]
