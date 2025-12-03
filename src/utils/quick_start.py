@@ -1,21 +1,26 @@
 from logging import getLogger
 from itertools import product
+from utils.check_and_prepare_dataset import check_and_prepare_dataset
 from utils.dataset import RecDataset
 from utils.dataloader import TrainDataLoader, EvalDataLoader
+from utils.enum_type import TrainDataLoaderState, EvalDataLoaderState
 from utils.logger import init_logger
 from utils.configurator import Config
-from utils.utils import init_seed, get_model, get_trainer, dict2str, metrics_dict2str
+from utils.utils import init_seed, get_model, get_trainer, dict2str, metrics_dict2str, get_config_by_path, set_config_by_path
 import platform
 import os
 
-def quick_start(model, dataset, config_dict, save_model=True):
-    config = Config(model, dataset, config_dict)
+def quick_start(model, dataset, domains, save_model=True):
+    config = Config(model, dataset, domains)
     init_logger(config)
     logger = getLogger()
     # print config infor
     logger.info('██Server: \t' + platform.node())
     logger.info('██Dir: \t' + os.getcwd() + '\n')
     logger.info(config)
+
+    # prepare dataset
+    check_and_prepare_dataset(config)
 
     # load data
     dataset = RecDataset(config)
@@ -30,16 +35,14 @@ def quick_start(model, dataset, config_dict, save_model=True):
     # wrap into dataloader
     train_data = TrainDataLoader(config, train_dataset, batch_size=config['train_batch_size'], shuffle=True)
     (valid_data, test_data) = (
-        EvalDataLoader(config, valid_dataset, additional_dataset=train_dataset, batch_size=config['eval_batch_size']),
-        EvalDataLoader(config, test_dataset, additional_dataset=train_dataset, batch_size=config['eval_batch_size']))
+        EvalDataLoader(config, valid_dataset, batch_size=config['eval_batch_size']),
+        EvalDataLoader(config, test_dataset, batch_size=config['eval_batch_size']))
 
     ############ Dataset loadded, run model
     hyper_ret = []
     val_metric = config['valid_metric'].lower()
-    best_test_value_src = 0.0
-    best_test_value_tgt = 0.0
-    best_test_idx_src = 0
-    best_test_idx_tgt = 0
+    best_test_value = 0.0
+    best_test_idx = 0
     idx = 0
 
     logger.info('\n\n=================================\n\n')
@@ -49,14 +52,14 @@ def quick_start(model, dataset, config_dict, save_model=True):
     if "seed" not in config['hyper_parameters']:
         config['hyper_parameters'] = ['seed'] + config['hyper_parameters']
     for i in config['hyper_parameters']:
-        hyper_ls.append(config[i] or [None])
+        hyper_ls.append(get_config_by_path(config, i) or [None])
     # combinations
     combinators = list(product(*hyper_ls))
     total_loops = len(combinators)
     for hyper_tuple in combinators:
         # random seed reset
         for j, k in zip(config['hyper_parameters'], hyper_tuple):
-            config[j] = k
+             set_config_by_path(config, j, k)
         init_seed(config['seed'])
 
         logger.info('========={}/{}: Parameters:{}={}======='.format(

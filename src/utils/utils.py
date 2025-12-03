@@ -120,3 +120,30 @@ def get_model(model_name):
 
 def get_trainer():
     return getattr(importlib.import_module('common.trainer'), 'Trainer')
+
+def get_config_by_path(config, path: str):
+    """
+    path: e.g., 'training_stages.1.learning_rate'
+    """
+    parts = path.split('.')
+    cur = config
+    for p in parts:
+        if isinstance(cur, list) and p.isdigit():
+            cur = cur[int(p)]
+        else:
+            cur = cur[p]
+    return cur
+
+def set_config_by_path(config, path: str, value):
+    parts = path.split('.')
+    cur = config
+    for p in parts[:-1]:
+        if isinstance(cur, list) and p.isdigit():
+            cur = cur[int(p)]
+        else:
+            cur = cur[p]
+    last = parts[-1]
+    if isinstance(cur, list) and last.isdigit():
+        cur[int(last)] = value
+    else:
+        cur[last] = value

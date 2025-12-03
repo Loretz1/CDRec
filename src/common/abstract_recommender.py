@@ -12,6 +12,12 @@ class AbstractRecommender(nn.Module):
     def post_epoch_processing(self):
         pass
 
+    def set_train_stage(self):
+        r"""
+         Configure the model for the current training stage.
+        """
+        pass
+
     def calculate_loss(self, interaction, epoch_idx):
         r"""Calculate the training loss for a batch data.
 
@@ -20,17 +26,6 @@ class AbstractRecommender(nn.Module):
 
         Returns:
             torch.Tensor: Training loss, shape: []
-        """
-        raise NotImplementedError
-
-    def predict(self, interaction):
-        r"""Predict the scores between users and items.
-
-        Args:
-            interaction (Interaction): Interaction class of the batch.
-
-        Returns:
-            torch.Tensor: Predicted scores for given users and items, shape: [batch_size]
         """
         raise NotImplementedError
 
@@ -64,12 +59,10 @@ class GeneralRecommender(AbstractRecommender):
         super(GeneralRecommender, self).__init__()
 
         # load dataset info
-        self.USER_ID = config['USER_ID_FIELD']
-        self.ITEM_ID = config['ITEM_ID_FIELD']
-        self.n_users = dataloader.dataset.get_user_num()
-        self.n_source_items = dataloader.dataset.get_source_item_num()
-        self.n_target_items = dataloader.dataset.get_target_item_num()
+        self.num_users_overlap = dataloader.dataset.num_users_overlap
+        self.num_users_src = dataloader.dataset.num_users_src
+        self.num_users_tgt = dataloader.dataset.num_users_tgt
+        self.num_items_src = dataloader.dataset.num_items_src
+        self.num_items_tgt = dataloader.dataset.num_items_tgt
 
-        # load parameters info
-        self.batch_size = config['train_batch_size']
         self.device = config['device']

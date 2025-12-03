@@ -9,7 +9,8 @@ def init_logger(config):
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
-    logfilename = '{}-{}-{}.log'.format(config['model'], config['dataset'], get_local_time())
+    domains_str = '+'.join(config['domains'])
+    logfilename = '{}-{}-{}-{}.log'.format(config['model'], config['dataset'], domains_str, get_local_time())
 
     logfilepath = os.path.join(LOGROOT, logfilename)
 

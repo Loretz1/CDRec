@@ -16,10 +16,10 @@ class Base(GeneralRecommender):
         self.dropout = config["dropout"]
         self.loss_type = config["loss_type"].lower()
 
-        self.source_user_embedding = nn.Embedding(self.n_users, self.feature_dim)
-        self.target_user_embedding = nn.Embedding(self.n_users, self.feature_dim)
-        self.source_item_embedding = nn.Embedding(self.n_source_items, self.feature_dim)
-        self.target_item_embedding = nn.Embedding(self.n_target_items, self.feature_dim)
+        self.source_user_embedding = nn.Embedding(self.num_users_src, self.feature_dim)
+        self.target_user_embedding = nn.Embedding(self.num_users_tgt, self.feature_dim)
+        self.source_item_embedding = nn.Embedding(self.num_items_src, self.feature_dim)
+        self.target_item_embedding = nn.Embedding(self.num_items_tgt, self.feature_dim)
 
         def make_mlp(in_dim, hidden_dim, layers):
             mlp = []

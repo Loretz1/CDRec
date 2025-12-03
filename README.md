@@ -2,3 +2,5 @@
 ## RUN
 python -u main.py --model DisenCDR --dataset sport_clothing
 nohup python -u main.py --model Base --dataset sport_clothing >run.log 2>&1 &
+
+CUDA_VISIBLE_DEVICES=0 python -u main.py --model Base --dataset Amazon2014 --domains Clothing_Shoes_and_Jewelry Sports_and_Outdoors

@@ -1,30 +1,17 @@
 # general
-gpu_id: 1
+#gpu_id: 1
 use_gpu: True
 seed: [999]
-
-# raw features
-data_path: '../data/'
-inter_splitting_label: 'x_label'
-filter_out_cod_start_users: True
 
 save_recommended_topk: True
 recommend_topk: 'recommend_topk/'
 
 embedding_size: 64
-weight_decay: 0.0
 req_training: True
 
-# training settings
-epochs: 1000
-stopping_step: 20
-train_batch_size: 2048
-learner: adam
-learning_rate: 0.001
-learning_rate_scheduler: [1.0, 50]
-eval_step: 1
-
 # evaluation settings
+eval_step: 1
+stopping_step: 20
 metrics: ["Recall", "NDCG", "Precision", "MAP"]
 topk: [5, 10, 20, 50]
 valid_metric: Recall@20

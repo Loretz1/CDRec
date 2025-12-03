@@ -2,26 +2,30 @@ import math
 import torch
 import random
 import numpy as np
+import pandas as pd
 from logging import getLogger
+from pandas.io.formats.format import return_docstring
+from utils.enum_type import TrainDataLoaderState, EvalDataLoaderState
 from scipy.sparse import coo_matrix
 
 
 class AbstractDataLoader(object):
-    def __init__(self, config, dataset, additional_dataset=None,
-                 batch_size=1, shuffle=False):
+    def __init__(self, config, dataset, batch_size=1, shuffle=False):
         self.config = config
         self.logger = getLogger()
         self.dataset = dataset
-        self.dataset_bk = self.dataset.copy(self.dataset.df)
-        self.additional_dataset = additional_dataset
+        self.dataset_bk = self.dataset.copy(self.dataset.BASIC_DATA_FIELDS)
+        for key in self.dataset.df:
+            df = self.dataset.df[key]
+            self.dataset_bk.df[key] = pd.DataFrame(
+                df.values.copy(), columns=df.columns
+            ).reset_index(drop=True)
         self.batch_size = batch_size
-        self.step = batch_size
         self.shuffle = shuffle
         self.device = config['device']
 
         self.pr = 0
         self.inter_pr_src = 0
-        self.inter_pr_tgt = 0
 
     def pretrain_setup(self):
         """This function can be used to deal with some problems after essential args are initialized,
@@ -36,7 +40,7 @@ class AbstractDataLoader(object):
         pass
 
     def __len__(self):
-        return math.ceil(self.pr_end / self.step)
+        return math.ceil(self.pr_end / self.batch_size)
 
     def __iter__(self):
         if self.shuffle:
@@ -46,8 +50,6 @@ class AbstractDataLoader(object):
     def __next__(self):
         if self.pr >= self.pr_end:
             self.pr = 0
-            self.inter_pr_src = 0
-            self.inter_pr_tgt = 0
             raise StopIteration()
         return self._next_batch_data()
 
@@ -72,83 +74,137 @@ class AbstractDataLoader(object):
 
 class TrainDataLoader(AbstractDataLoader):
     def __init__(self, config, dataset, batch_size=1, shuffle=False):
-        super().__init__(config, dataset, additional_dataset=None,
-                         batch_size=batch_size, shuffle=shuffle)
+        super().__init__(config, dataset, batch_size=batch_size, shuffle=shuffle)
+        self.state = None
 
-        # special for training dataloader
-        self.history_source_items_per_u = dict()
-        self.history_target_items_per_u = dict()
-        # full items in training.
-        self.all_source_items = self.dataset.get_source_df()[self.dataset.iid_field].unique().tolist()
-        self.all_target_items = self.dataset.get_target_df()[self.dataset.iid_field].unique().tolist()
-        self.all_uids = self.dataset.df[self.dataset.uid_field].unique()
-        self.all_source_items_set = set(self.all_source_items)
-        self.all_target_items_set = set(self.all_target_items)
-        self.all_users_set = set(self.all_uids)
-        self.all_source_item_len = len(self.all_source_items)
-        self.all_target_item_len = len(self.all_target_items)
+    def set_state_for_train(self, state):
+        if not isinstance(state, TrainDataLoaderState):
+            raise TypeError("state must be an instance of TrainDataLoaderState")
 
-        self.sample_func = self._get_sample
+        self.state = state
+        self.dataset.set_state_for_train(state)
+        self.sample_func = self._get_sample_func()
+        self.pr = 0
 
-        self._get_history_items_u()
+    def set_batch_size(self, batch_size):
+        self.batch_size = batch_size
 
     def pretrain_setup(self):
-        """
-        Reset dataloader. Outputing the same positive & negative samples with each training.
-        :return:
-        """
-        # sort & random
         if self.shuffle:
-            self.dataset = self.dataset_bk.copy(self.dataset_bk.df)
-        self.all_source_items.sort()
-        self.all_target_items.sort()
-        self.all_uids.sort()
-        random.shuffle(self.all_source_items)
-        random.shuffle(self.all_target_items)
+            self.dataset = self.dataset_bk.copy(self.dataset_bk.BASIC_DATA_FIELDS)
+            for key in self.dataset_bk.df:
+                df = self.dataset_bk.df[key]
+                self.dataset.df[key] = pd.DataFrame(
+                    df.values.copy(), columns=df.columns
+                ).reset_index(drop=True)
 
     def inter_matrix(self, form='coo', value_field=None):
-        uid_field = self.dataset.uid_field
-        iid_field = self.dataset.iid_field
-        domain_field = self.dataset.domain_field
-        if not uid_field or not iid_field:
-            raise ValueError("dataset doesn't exist uid/iid, cannot convert to sparse matrix")
-        df_source = self.dataset.get_source_df()
-        mat_source = self._create_sparse_matrix(
-            df_source, uid_field, iid_field,
-            form=form, value_field=value_field,
-            user_num=self.dataset.user_num,
-            item_num=self.dataset.source_item_num
-        )
-        df_target = self.dataset.get_target_df()
-        mat_target = self._create_sparse_matrix(
-            df_target, uid_field, iid_field,
-            form=form, value_field=value_field,
-            user_num=self.dataset.user_num,
-            item_num=self.dataset.target_item_num
-        )
-        return mat_source, mat_target
+        pass
 
     def _create_sparse_matrix(self, df_feat, source_field, target_field,
                               form='coo', value_field=None,
                               user_num=None, item_num=None):
-        src = df_feat[source_field].values
-        tgt = df_feat[target_field].values
+        pass
 
-        if value_field is None:
-            data = np.ones(len(df_feat))
+    def _get_sample_func(self):
+        if self.state == TrainDataLoaderState.SOURCE or self.state == TrainDataLoaderState.TARGET:
+            return self._sample_single_domain
+        elif self.state == TrainDataLoaderState.BOTH:
+            return self._sample_both
+        return None
+
+    def _sample_single_domain(self):
+        """
+        Returns:
+        dict: {
+            "users": Tensor(batch_size),
+            "pos_items": Tensor(batch_size),
+            "neg_items": Tensor(batch_size)
+        }
+        """
+        domain = 0 if self.state == TrainDataLoaderState.SOURCE else 1
+        cur_data = self.dataset[self.pr: self.pr + self.batch_size]
+        self.pr += self.batch_size
+
+        users, pos_items, neg_items = [], [], []
+
+        for _, row in cur_data.iterrows():
+            u, i_pos= row['user'], row['item']
+            i_neg = self._sample_neg_item_from_domain_for_u(u, domain)
+            users.append(u)
+            pos_items.append(i_pos)
+            neg_items.append(i_neg)
+
+        return {
+            "users": torch.tensor(users, dtype=torch.long, device=self.device),
+            "pos_items": torch.tensor(pos_items, dtype=torch.long, device=self.device),
+            "neg_items": torch.tensor(neg_items, dtype=torch.long, device=self.device)
+        }
+
+    def _sample_both(self):
+        """
+        Returns:
+        dict: {
+            "users_src": Tensor(batch_size),
+            "pos_items_src": Tensor(batch_size),
+            "neg_items_src": Tensor(batch_size)
+            "users_tgt": Tensor(batch_size),
+            "pos_items_tgt": Tensor(batch_size),
+            "neg_items_tgt": Tensor(batch_size)
+        }
+        """
+        cur_data = self.dataset[self.pr: self.pr + self.batch_size]
+        self.pr += self.batch_size
+
+        users_src, pos_items_src, neg_items_src = [], [], []
+        users_tgt, pos_items_tgt, neg_items_tgt = [], [], []
+
+        for _, row in cur_data.iterrows():
+            u, i, d = row["user"], row["item"], row["domain"]
+
+            if d == 0:
+                users_src.append(u)
+                pos_items_src.append(i)
+                neg_items_src.append(self._sample_neg_item_from_domain_for_u(u, domain=0))
+                u_another_domain, i_another_domain = self._sample_interaction_from_domain(1)
+                users_tgt.append(u_another_domain)
+                pos_items_tgt.append(i_another_domain)
+                neg_items_tgt.append(self._sample_neg_item_from_domain_for_u(u_another_domain, domain=1))
+            else:
+                users_tgt.append(u)
+                pos_items_tgt.append(i)
+                neg_items_tgt.append(self._sample_neg_item_from_domain_for_u(u, domain=1))
+                u_another_domain, i_another_domain = self._sample_interaction_from_domain(0)
+                users_src.append(u_another_domain)
+                pos_items_src.append(i_another_domain)
+                neg_items_src.append(self._sample_neg_item_from_domain_for_u(u_another_domain, domain=0))
+
+        return{
+            "users_src": torch.tensor(users_src, dtype=torch.long, device=self.device),
+            "pos_items_src": torch.tensor(pos_items_src, dtype=torch.long, device=self.device),
+            "neg_items_src": torch.tensor(neg_items_src, dtype=torch.long, device=self.device),
+            "users_tgt": torch.tensor(users_tgt, dtype=torch.long, device=self.device),
+            "pos_items_tgt": torch.tensor(pos_items_tgt, dtype=torch.long, device=self.device),
+            "neg_items_tgt": torch.tensor(neg_items_tgt, dtype=torch.long, device=self.device)
+        }
+
+    def _sample_neg_item_from_domain_for_u(self, u, domain):
+        if domain == 0:
+            pool = range(1, self.dataset.num_items_src + 1)
+            hist = self.dataset.positive_items_src[u]
         else:
-            if value_field not in df_feat.columns:
-                raise ValueError(f"value_field [{value_field}] should be one of df_feat's features.")
-            data = df_feat[value_field].values
+            pool = range(1, self.dataset.num_items_tgt + 1)
+            hist = self.dataset.positive_items_tgt[u]
 
-        mat = coo_matrix((data, (src, tgt)), shape=(user_num, item_num))
+        neg = random.sample(pool, 1)[0]
+        while neg in hist:
+            neg = random.sample(pool, 1)[0]
+        return neg
 
-        if form == 'coo':
-            return mat
-        elif form == 'csr':
-            return mat.tocsr()
-        else:
-            raise NotImplementedError(f"sparse matrix format [{form}] not implemented.")
+    def _sample_interaction_from_domain(self, domain):
+        df = self.dataset.df["train_src"] if domain == 0 else self.dataset.df["train_tgt"]
+        row = df.sample(n=1).iloc[0]
+        return row["user"], row["item"]
 
     @property
     def pr_end(self):
@@ -160,193 +216,117 @@ class TrainDataLoader(AbstractDataLoader):
     def _next_batch_data(self):
         return self.sample_func()
 
-    def _get_sample(self):
-        """
-        return tensor with shape (5, batch_size)：
-        [ user, source_pos, source_neg, target_pos, target_neg ]
-        """
-        cur_data = self.dataset[self.pr: self.pr + self.step]
-        self.pr += self.step
-
-        users, src_pos, src_neg, tgt_pos, tgt_neg = [], [], [], [], []
-        for _, row in cur_data.iterrows():
-            u, i, d = row[self.dataset.uid_field], row[self.dataset.iid_field], row[self.dataset.domain_field]
-            if d == 0:
-                src_pos_iid = i
-                tgt_pos_iid = self._sample_pos_from_domain(u, domain=1)
-            else:
-                tgt_pos_iid = i
-                src_pos_iid = self._sample_pos_from_domain(u, domain=0)
-
-            src_neg_iid = self._sample_neg_from_domain(u, domain=0)
-            tgt_neg_iid = self._sample_neg_from_domain(u, domain=1)
-            users.append(u)
-            src_pos.append(src_pos_iid)
-            src_neg.append(src_neg_iid)
-            tgt_pos.append(tgt_pos_iid)
-            tgt_neg.append(tgt_neg_iid)
-
-        user_tensor = torch.tensor(users, dtype=torch.long, device=self.device)
-        src_pos_tensor = torch.tensor(src_pos, dtype=torch.long, device=self.device)
-        src_neg_tensor = torch.tensor(src_neg, dtype=torch.long, device=self.device)
-        tgt_pos_tensor = torch.tensor(tgt_pos, dtype=torch.long, device=self.device)
-        tgt_neg_tensor = torch.tensor(tgt_neg, dtype=torch.long, device=self.device)
-
-        return torch.stack([user_tensor, src_pos_tensor, src_neg_tensor, tgt_pos_tensor, tgt_neg_tensor], dim=0)
-
-    def _sample_pos_from_domain(self, u, domain):
-        if domain == 0:
-            hist = self.history_source_items_per_u.get(u, None)
-        else:
-            hist = self.history_target_items_per_u.get(u, None)
-        if not hist:
-            return None
-        return random.sample(hist, 1)[0]
-
-    def _sample_neg_from_domain(self, u, domain):
-        if domain == 0:
-            pool = self.all_source_items
-            hist = self.history_source_items_per_u.get(u, set())
-        else:
-            pool = self.all_target_items
-            hist = self.history_target_items_per_u.get(u, set())
-
-        neg = random.sample(pool, 1)[0]
-        while neg in hist:
-            neg = random.sample(pool, 1)[0]
-        return neg
-
-    def _get_history_items_u(self):
-        uid_field = self.dataset.uid_field
-        iid_field = self.dataset.iid_field
-        domain_field = self.dataset.domain_field
-
-        source_df = self.dataset.get_source_df()
-        uid_freq_source = source_df.groupby(uid_field)[iid_field]
-        for u, i_ls in uid_freq_source:
-            self.history_source_items_per_u[u] = set(i_ls.values)
-        target_df = self.dataset.get_target_df()
-        uid_freq_target = target_df.groupby(uid_field)[iid_field]
-        for u, i_ls in uid_freq_target:
-            self.history_target_items_per_u[u] = set(i_ls.values)
 
 
 class EvalDataLoader(AbstractDataLoader):
-    """
-        additional_dataset: training dataset in evaluation
-    """
-    def __init__(self, config, dataset, additional_dataset=None,
-                 batch_size=1, shuffle=False):
-        super().__init__(config, dataset, additional_dataset=additional_dataset,
-                         batch_size=batch_size, shuffle=shuffle)
+    def __init__(self, config, dataset, batch_size=1, shuffle=False):
+        super().__init__(config, dataset, batch_size=batch_size, shuffle=shuffle)
 
-        if additional_dataset is None:
-            raise ValueError('Training datasets is nan')
-        self.eval_items_per_u_source = []
-        self.eval_items_per_u_target = []
-        self.eval_len_list_source = []
-        self.eval_len_list_target = []
-        self.train_pos_len_list_source = []
-        self.train_pos_len_list_target = []
+        self.cache = {}
+        self.state = None
+        self.current = None
 
-        assert (self.dataset.get_source_df()[self.dataset.uid_field].nunique() ==
-                self.dataset.get_target_df()[self.dataset.uid_field].nunique())
-        self.eval_u = self.dataset.df[self.dataset.uid_field].unique()
-        # special for eval dataloader
-        self.pos_items_per_u_source, self.pos_items_per_u_target = self._get_pos_items_per_u(self.eval_u)
-        self.pos_items_per_u_source = self.pos_items_per_u_source.to(self.device)
-        self.pos_items_per_u_target = self.pos_items_per_u_target.to(self.device)
-        self._get_eval_items_per_u(self.eval_u)
-        # to device
-        self.eval_u = torch.tensor(self.eval_u).type(torch.LongTensor).to(self.device)
+        if config.get("warm_eval", False):
+            self.cache["warm"] = self._prepare_one_state("warm_tgt")
+        if config.get("cold_start_eval", False):
+            self.cache["cold"] = self._prepare_one_state("cold_tgt")
+
+    def _prepare_one_state(self, df_key):
+        df = self.dataset.df.get(df_key, None)
+        if df is None:
+            raise KeyError(f"Dataset missing df[{df_key}] for evaluation.")
+
+        eval_users = df["user"].unique()
+
+        pos_items_per_u, train_pos_len_list = \
+            self._build_pos_items_per_u(eval_users, df_key)
+
+        eval_items_per_u, eval_len_list = \
+            self._build_eval_items_per_u(eval_users, df)
+
+        return {
+            "eval_u": torch.tensor(eval_users, dtype=torch.long, device=self.device),
+            "pos_items_per_u": pos_items_per_u,
+            "train_pos_len_list": train_pos_len_list,
+            "eval_items_per_u": eval_items_per_u,
+            "eval_len_list": eval_len_list
+        }
+
+    def _build_pos_items_per_u(self, eval_users, df_key):
+        if df_key == "cold_tgt":
+            L = len(eval_users)
+            return torch.zeros((2, 0), dtype=torch.long, device=self.device), [0] * L
+
+        tgt_pos = self.dataset.positive_items_tgt
+
+        u_ids, i_ids = [], []
+        pos_len = []
+        for idx, u in enumerate(eval_users):
+            items = list(tgt_pos.get(u, []))
+            pos_len.append(len(items))
+
+            u_ids.extend([idx] * len(items))
+            i_ids.extend(items)
+
+        if len(u_ids) == 0:
+            pos_items_per_u = torch.zeros((2, 0), dtype=torch.long, device=self.device)
+        else:
+            pos_items_per_u = torch.tensor([u_ids, i_ids], dtype=torch.long, device=self.device)
+        return pos_items_per_u, pos_len
+
+    def _build_eval_items_per_u(self, eval_users, df):
+        uid_freq = df.groupby("user")["item"]
+
+        eval_items = []
+        eval_len = []
+        for u in eval_users:
+            if u in uid_freq.groups:
+                items = uid_freq.get_group(u).values
+            else:
+                items = np.array([], dtype=int)
+
+            eval_items.append(items)
+            eval_len.append(len(items))
+
+        return eval_items, eval_len
+
+    def set_state_for_eval(self, state):
+        assert isinstance(state, EvalDataLoaderState)
+        self.state = state
+
+        if state == EvalDataLoaderState.WARM:
+            self.current = self.cache["warm"]
+        else:
+            self.current = self.cache["cold"]
+
+        self.pr = 0
+        self.inter_pr = 0
 
     @property
     def pr_end(self):
-        return self.eval_u.shape[0]
+        return len(self.current["eval_u"])
 
     def _shuffle(self):
         self.dataset.shuffle()
 
     def _next_batch_data(self):
-        inter_cnt_src = sum(self.train_pos_len_list_source[self.pr: self.pr + self.step])
-        batch_users = self.eval_u[self.pr: self.pr + self.step]
-        batch_mask_src = self.pos_items_per_u_source[:, self.inter_pr_src: self.inter_pr_src + inter_cnt_src].clone()
-        batch_mask_src[0] -= self.pr
-        self.inter_pr_src += inter_cnt_src
+        batch_users = self.current["eval_u"][self.pr:self.pr + self.batch_size]
 
-        inter_cnt_tgt = sum(self.train_pos_len_list_target[self.pr: self.pr + self.step])
-        batch_mask_tgt = self.pos_items_per_u_target[:, self.inter_pr_tgt: self.inter_pr_tgt + inter_cnt_tgt].clone()
-        batch_mask_tgt[0] -= self.pr
-        self.inter_pr_tgt += inter_cnt_tgt
+        cnt = sum(self.current["train_pos_len_list"][self.pr:self.pr + self.batch_size])
 
-        self.pr += self.step
-        return [batch_users, batch_mask_src, batch_mask_tgt]
+        mask = self.current["pos_items_per_u"][:, self.inter_pr:self.inter_pr + cnt].clone()
+        mask[0] -= self.pr
 
-    def _get_pos_items_per_u(self, eval_users):
-        uid_field = self.additional_dataset.uid_field
-        iid_field = self.additional_dataset.iid_field
-        src_uid_freq = self.additional_dataset.get_source_df().groupby(uid_field)[iid_field]
-        tgt_uid_freq = self.additional_dataset.get_target_df().groupby(uid_field)[iid_field]
+        self.inter_pr += cnt
+        self.pr += self.batch_size
 
-        u_ids_src, i_ids_src = [], []
-        u_ids_tgt, i_ids_tgt = [], []
-
-        for i, u in enumerate(eval_users):
-            if u in src_uid_freq.groups:
-                src_items = src_uid_freq.get_group(u).values
-                self.train_pos_len_list_source.append(len(src_items))
-                u_ids_src.extend([i] * len(src_items))
-                i_ids_src.extend(src_items)
-            else:
-                self.train_pos_len_list_source.append(0)
-            if u in tgt_uid_freq.groups:
-                tgt_items = tgt_uid_freq.get_group(u).values
-                self.train_pos_len_list_target.append(len(tgt_items))
-                u_ids_tgt.extend([i] * len(tgt_items))
-                i_ids_tgt.extend(tgt_items)
-            else:
-                self.train_pos_len_list_target.append(0)
-
-        pos_items_per_u_source = torch.tensor([u_ids_src, i_ids_src], dtype=torch.long)
-        pos_items_per_u_target = torch.tensor([u_ids_tgt, i_ids_tgt], dtype=torch.long)
-
-        return pos_items_per_u_source, pos_items_per_u_target
-
-    def _get_eval_items_per_u(self, eval_users):
-        uid_field = self.dataset.uid_field
-        iid_field = self.dataset.iid_field
-
-        src_df = self.dataset.get_source_df()
-        src_uid_freq = src_df.groupby(uid_field)[iid_field]
-
-        tgt_df = self.dataset.get_target_df()
-        tgt_uid_freq = tgt_df.groupby(uid_field)[iid_field]
-
-        for u in eval_users:
-            if u in src_uid_freq.groups:
-                src_items = src_uid_freq.get_group(u).values
-                self.eval_items_per_u_source.append(src_items)
-                self.eval_len_list_source.append(len(src_items))
-            else:
-                self.eval_items_per_u_source.append(np.array([], dtype=int))
-                self.eval_len_list_source.append(0)
-            if u in tgt_uid_freq.groups:
-                tgt_items = tgt_uid_freq.get_group(u).values
-                self.eval_items_per_u_target.append(tgt_items)
-                self.eval_len_list_target.append(len(tgt_items))
-            else:
-                self.eval_items_per_u_target.append(np.array([], dtype=int))
-                self.eval_len_list_target.append(0)
-
-        self.eval_len_list_source = np.asarray(self.eval_len_list_source)
-        self.eval_len_list_target = np.asarray(self.eval_len_list_target)
-
-    # return pos_items for each u
-    def get_eval_items(self):
-        return self.eval_items_per_u_source, self.eval_items_per_u_target
-
-    def get_eval_len_list(self):
-        return self.eval_len_list_source, self.eval_len_list_target
+        return [batch_users, mask]
 
     def get_eval_users(self):
-        return self.eval_u.cpu()
+        return self.current["eval_u"].cpu()
+
+    def get_eval_items(self):
+        return self.current["eval_items_per_u"]
+
+    def get_eval_len_list(self):
+        return self.current["eval_len_list"]

@@ -5,12 +5,13 @@ import torch
 
 
 class Config(object):
-    def __init__(self, model=None, dataset=None, config_dict=None):
+    def __init__(self, model=None, dataset=None, domains=None, config_dict=None):
         # load dataset config file yaml
         if config_dict is None:
             config_dict = {}
         config_dict['model'] = model
         config_dict['dataset'] = dataset
+        config_dict['domains'] = domains
         # model type
         self.final_config_dict = self._load_dataset_model_config(config_dict)
         # config in cmd and main.py are latest
@@ -64,8 +65,6 @@ class Config(object):
 
     def _init_device(self):
         use_gpu = self.final_config_dict['use_gpu']
-        if use_gpu:
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(self.final_config_dict['gpu_id'])
         self.final_config_dict['device'] = torch.device("cuda" if torch.cuda.is_available() and use_gpu else "cpu")
 
     def __setitem__(self, key, value):
@@ -78,6 +77,11 @@ class Config(object):
             return self.final_config_dict[item]
         else:
             return None
+
+    def get(self, key, default=None):
+        if not isinstance(key, str):
+            raise TypeError("Config.get() key must be string")
+        return self.final_config_dict.get(key, default)
 
     def __contains__(self, key):
         if not isinstance(key, str):

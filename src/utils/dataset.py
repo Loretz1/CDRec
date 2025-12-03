@@ -1,146 +1,336 @@
 from logging import getLogger
-from collections import Counter
 import os
+import json
 import pandas as pd
 import numpy as np
-import torch
-import lmdb
+from utils.enum_type import TrainDataLoaderState, EvalDataLoaderState
+import random
 
 
 class RecDataset(object):
-    def __init__(self, config, df=None):
+    # Fields for train/valid/test
+    META_FIELDS = [
+        "config", "logger",
+        "all_users",
+        "num_users_overlap", "num_users_src", "num_users_tgt",
+        "num_items_src", "num_items_tgt",
+    ]
+
+    # Optional Basic Field For train/valid/test
+    BASIC_DATA_FIELDS = [
+        "sent_emb_dim", "sent_embeddings",
+        "positive_items_src", "positive_items_tgt",
+    ]
+
+    # Optional DF Field For train/valid/test, create a dict named "df" for storage of DataFrame
+    DATAFRAME_FIELDS = [
+        "train_src", "train_tgt", "train_both",
+        "valid_cold_tgt", "test_cold_tgt",
+        "valid_warm_tgt", "test_warm_tgt",
+    ]
+    def __init__(self, config, skip=False):
         self.config = config
         self.logger = getLogger()
+        self.df = {}
 
-        # data path & files
-        self.dataset_name = config['dataset']
-        self.dataset_path = os.path.abspath(config['data_path']+self.dataset_name)
-
-        # dataframe
-        self.uid_field = self.config['USER_ID_FIELD']
-        self.iid_field = self.config['ITEM_ID_FIELD']
-        self.domain_field = self.config['DOMAIN_FIELD']
-        self.splitting_label = self.config['inter_splitting_label']
-
-        if df is not None :
-            self.df = df
+        if skip:
             return
-        # if all files exists
-        check_file_list = [self.config['source_inter_file_name'], self.config['target_inter_file_name']]
-        for i in check_file_list:
-            file_path = os.path.join(self.dataset_path, i)
-            if not os.path.isfile(file_path):
-                raise ValueError('File {} not exist'.format(file_path))
 
-        # load rating file from data path?
-        self.load_inter_graph(self.config['source_inter_file_name'], self.config['target_inter_file_name'])
+        dataset_path = os.path.join(self.config['data_path'], config['dataset'], '+'.join(config['domains']),
+                                    'only_overlap_users' if config['only_overlap_users'] else 'all_users')
 
+        self.sent_emb_dim = self.config['sent_emb_pca'] if 'sent_emb_pca' in self.config else self.config[
+            'sent_emb_dim']
+        all_item_seqs, id_mapping, sent_embeddings = self._load_data(dataset_path)
+        pad_embedding = np.zeros((1, self.sent_emb_dim), dtype=np.float32)
+        self.sent_embeddings = {
+            domain: np.concatenate([pad_embedding, sent_embeddings[domain]], axis=0)
+            for domain in ['src', 'tgt']
+        }
 
-    def load_inter_graph(self, source_file_name, target_file_name):
-        cols = [self.uid_field, self.iid_field, self.splitting_label]
-        source_inter_file = os.path.join(self.dataset_path, source_file_name)
-        df_source = pd.read_csv(source_inter_file, usecols=cols, sep=self.config['field_separator'])
-        if not df_source.columns.isin(cols).all():
-            raise ValueError('File {} lost some required columns.'.format(source_file_name))
-        df_source[self.domain_field] = 0
+        self.all_users, user2id_src, user2id_tgt = self._split_users(all_item_seqs)
 
-        target_inter_file = os.path.join(self.dataset_path, target_file_name)
-        df_target = pd.read_csv(target_inter_file, usecols=cols, sep=self.config['field_separator'])
-        if not df_target.columns.isin(cols).all():
-            raise ValueError('File {} lost some required columns.'.format(target_file_name))
-        df_target[self.domain_field] = 1
+        (self.train_src, self.train_tgt, self.valid_cold_tgt, self.test_cold_tgt, self.valid_warm_tgt,
+         self.test_warm_tgt), (self.positive_items_src, self.positive_items_tgt) = self._split_interation(
+            all_item_seqs, id_mapping, user2id_src, user2id_tgt)
 
-        self.df = pd.concat([df_source, df_target], ignore_index=True)
-        assert max(df_source[self.uid_field].values) == max(df_target[self.uid_field].values)
-        self.user_num = int(max(df_source[self.uid_field].values)) + 1
-        self.source_item_num = int(max(df_source[self.iid_field].values)) + 1
-        self.target_item_num = int(max(df_target[self.iid_field].values)) + 1
+        self.train_both = self._build_train_both_df(self.train_src, self.train_tgt)
+
+        #   - The 5 user groups are mutually exclusive (no overlaps).
+        #   - overlap_users: assigned to the same ID range [1 .. len(overlap_users)] in BOTH src and tgt domains.
+        #                    → These are warm users shared across domains.
+        #   - src_only_users + valid_cold_users + test_cold_users:
+        #                    → These are single-domain users of source domain (only src has interactions).
+        #                    → Reindexed starting from len(overlap_users) + 1 in source domain.
+        #   - tgt_only_users: single-domain users of target domain (only tgt has interactions),
+        #                    → Reindexed starting from len(overlap_users) + 1 in target domain.
+        self.all_users = {
+            'overlap_users': {user2id_src[u] for u in self.all_users['overlap_users']},
+            'valid_cold_users': {user2id_src[u] for u in self.all_users['valid_cold_users']},
+            'test_cold_users': {user2id_src[u] for u in self.all_users['test_cold_users']},
+            'src_only_users': {user2id_src[u] for u in self.all_users['src_only_users']},
+            'tgt_only_users': {user2id_tgt[u] for u in self.all_users['tgt_only_users']}
+        }
+        self.num_users_overlap = len(self.all_users['overlap_users'])
+        self.num_users_src = len(self.all_users['overlap_users']) + len(self.all_users['valid_cold_users']) + len(self.all_users['test_cold_users']) + len(self.all_users['src_only_users'])
+        self.num_users_tgt = len(self.all_users['overlap_users']) + len(self.all_users['tgt_only_users'])
+        self.num_items_src = len(id_mapping['src']['item2id'])
+        self.num_items_tgt = len(id_mapping['tgt']['item2id'])
+
+    def _load_data(self, dataset_path):
+        self.logger.info('[TRAINING] Loading dataset from {}'.format(dataset_path))
+
+        # Load Data
+        all_item_seqs = {}
+        id_mapping = {}
+        sent_embeddings ={}
+        for domain in ['src', 'tgt']:
+            path = os.path.join(dataset_path, domain)
+            with open(os.path.join(path, 'all_item_seqs.json'), 'r') as f:
+                all_item_seqs[domain] = json.load(f)
+                if self.config.get("shuffle_user_sequence", True):
+                    for uid, items in all_item_seqs[domain].items():
+                        random.shuffle(items)
+            with open(os.path.join(path, 'id_mapping.json'), 'r') as f:
+                id_mapping[domain] = json.load(f)
+            sent_embeddings[domain] = np.load(os.path.join(path, f'final_sent_embeddings_{self.sent_emb_dim}.npy'))
+
+        return all_item_seqs, id_mapping, sent_embeddings
+
+    def _split_users(self, all_item_seqs):
+        # Split User Set
+        users_src = set(all_item_seqs['src'].keys())
+        users_tgt = set(all_item_seqs['tgt'].keys())
+        overlap_users = users_src & users_tgt
+        src_only_users = users_src - overlap_users
+        tgt_only_users = users_tgt - overlap_users
+
+        if self.config['cold_start_eval']:
+            overlap_list = np.random.permutation(list(overlap_users))
+            num_overlap = len(overlap_list)
+            num_valid_cold = int(num_overlap * self.config['t_cold_valid'])
+            num_test_cold = int(num_overlap * self.config['t_cold_test'])
+            assert num_valid_cold + num_test_cold <= num_overlap, "Sum of t_cold_valid and t_cold_test causes user overflow."
+            valid_cold_users = set(overlap_list[:num_valid_cold])
+            test_cold_users = set(overlap_list[num_valid_cold:num_valid_cold + num_test_cold])
+            overlap_users = set(overlap_list[num_valid_cold + num_test_cold:])
+        else:
+            valid_cold_users = set()
+            test_cold_users = set()
+
+        all_users = {
+            'overlap_users': overlap_users,
+            'valid_cold_users': valid_cold_users,
+            'test_cold_users': test_cold_users,
+            'src_only_users': src_only_users,
+            'tgt_only_users': tgt_only_users
+        }
+
+        # Reindex User ID for Each Domain
+        # Overlapped User: 1 -> num(overlap_users)
+        # Single Domain User: num(overlap_users) + 1 -> num(domain_user)
+        user2id_src = {}
+        user2id_tgt = {}
+        for i, u in enumerate(all_users['overlap_users'], start=1):
+            user2id_src[u] = i
+            user2id_tgt[u] = i
+        for i, u in enumerate(all_users['valid_cold_users'] | all_users['test_cold_users'] | all_users[
+            'src_only_users'], start=len(all_users['overlap_users']) + 1):
+            user2id_src[u] = i
+        for i, u in enumerate(all_users['tgt_only_users'], start=len(all_users['overlap_users']) + 1):
+            user2id_tgt[u] = i
+        return all_users, user2id_src, user2id_tgt
+
+    def _split_interation(self, all_item_seqs, id_mapping, user2id_src, user2id_tgt):
+        train_src, train_tgt = [], []
+        valid_cold_tgt, test_cold_tgt = [], []
+        valid_warm_tgt, test_warm_tgt = [], []
+        positive_items_src, positive_items_tgt = {}, {}
+
+        for raw_uid, item_seq in all_item_seqs['src'].items():
+            uid = user2id_src[raw_uid]
+            for raw_iid in item_seq:
+                iid = id_mapping['src']['item2id'][raw_iid]
+                train_src.append([uid, iid])
+                if uid not in positive_items_src:
+                    positive_items_src[uid] = set()
+                positive_items_src[uid].add(iid)
+
+        for raw_uid, item_seq in all_item_seqs['tgt'].items():
+            if raw_uid in self.all_users["valid_cold_users"]:
+                uid = user2id_src[raw_uid]
+                for raw_iid in item_seq:
+                    iid = id_mapping['tgt']['item2id'][raw_iid]
+                    valid_cold_tgt.append([uid, iid])
+            elif raw_uid in self.all_users["test_cold_users"]:
+                uid = user2id_src[raw_uid]  # cold users only have src IDs
+                for raw_iid in item_seq:
+                    iid = id_mapping['tgt']['item2id'][raw_iid]
+                    test_cold_tgt.append([uid, iid])
+            elif raw_uid in user2id_tgt:
+                uid = user2id_tgt[raw_uid]
+                if not self.config['warm_eval']:
+                    for raw_iid in item_seq:
+                        iid = id_mapping['tgt']['item2id'][raw_iid]
+                        train_tgt.append([uid, iid])
+                        if uid not in positive_items_tgt:
+                            positive_items_tgt[uid] = set()
+                        positive_items_tgt[uid].add(iid)
+                else:
+                    seq_len = len(item_seq)
+                    num_test = max(1, int(seq_len * self.config['warm_test_ratio']))
+                    num_valid = max(1, int(seq_len * self.config['warm_valid_ratio']))
+                    num_train = seq_len - num_valid - num_test
+                    for raw_iid in item_seq[:num_train]:
+                        train_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
+                        if uid not in positive_items_tgt:
+                            positive_items_tgt[uid] = set()
+                        positive_items_tgt[uid].add(id_mapping['tgt']['item2id'][raw_iid])
+                    for raw_iid in item_seq[num_train:num_train+num_valid]:
+                        valid_warm_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
+                    for raw_iid in item_seq[num_train+num_valid:]:
+                        test_warm_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
+
+        return (self._to_df(train_src), self._to_df(train_tgt), self._to_df(valid_cold_tgt), self._to_df(
+            test_cold_tgt), self._to_df(valid_warm_tgt), self._to_df(test_warm_tgt)), (positive_items_src,positive_items_tgt)
+
+    def _to_df(self, inter):
+        return pd.DataFrame(inter, columns=['user', 'item'])
+
+    def _build_train_both_df(self, df_src, df_tgt):
+        src_df = df_src.copy()
+        src_df["domain"] = 0
+
+        tgt_df = df_tgt.copy()
+        tgt_df["domain"] = 1
+
+        return pd.concat([src_df, tgt_df], axis=0, ignore_index=True)
 
     def split(self):
-        dfs = []
-        # splitting into training/validation/test
-        for i in range(3):
-            temp_df = self.df[self.df[self.splitting_label] == i].copy()
-            temp_df.drop(self.splitting_label, inplace=True, axis=1)        # no use again
-            dfs.append(temp_df)
-        if self.config['filter_out_cod_start_users']:
-            # filtering out new users in val/test sets
-            train_u = set(dfs[0][self.uid_field].values)
-            for i in [1, 2]:
-                dropped_inter = pd.Series(True, index=dfs[i].index)
-                dropped_inter ^= dfs[i][self.uid_field].isin(train_u)
-                dfs[i].drop(dfs[i].index[dropped_inter], inplace=True)
+        train_dataset = self.copy(
+            keep_fields=["train_both", "train_src", "train_tgt", "sent_emb_dim", "sent_embeddings",
+                         "positive_items_src", "positive_items_tgt"])
+        valid_dataset = self.copy(keep_fields=["valid_cold_tgt", "valid_warm_tgt", "positive_items_tgt"])
+        test_dataset = self.copy(keep_fields=["test_cold_tgt", "test_warm_tgt", "positive_items_tgt"])
+        valid_dataset.df["cold_tgt"] = valid_dataset.df.pop("valid_cold_tgt")
+        valid_dataset.df["warm_tgt"] = valid_dataset.df.pop("valid_warm_tgt")
+        test_dataset.df["cold_tgt"] = test_dataset.df.pop("test_cold_tgt")
+        test_dataset.df["warm_tgt"] = test_dataset.df.pop("test_warm_tgt")
+        return train_dataset, valid_dataset, test_dataset
 
-        # wrap as RecDataset
-        full_ds = [self.copy(_) for _ in dfs]
-        return full_ds
+    def copy(self, keep_fields):
+        new_dataset = RecDataset(self.config, skip=True)
+        for key in self.META_FIELDS:
+            setattr(new_dataset, key, getattr(self, key))
+        for key in self.BASIC_DATA_FIELDS:
+            if key in keep_fields and hasattr(self, key):
+                setattr(new_dataset, key, getattr(self, key))
+        for key in self.DATAFRAME_FIELDS:
+            if key in keep_fields and hasattr(self, key):
+                new_dataset.df[key] = getattr(self, key)
+        return new_dataset
 
-    def copy(self, new_df):
-        nxt = RecDataset(self.config, new_df)
+    def set_state_for_train(self, state):
+        assert isinstance(state, TrainDataLoaderState), "state must be a TrainDataLoaderState"
+        self.state = state
 
-        nxt.source_item_num = self.source_item_num
-        nxt.target_item_num = self.target_item_num
-        nxt.user_num = self.user_num
-        return nxt
+        if state == TrainDataLoaderState.BOTH:
+            self._active_df = self.df["train_both"]
+        elif state == TrainDataLoaderState.SOURCE:
+            self._active_df = self.df["train_src"]
+        elif state == TrainDataLoaderState.TARGET:
+            self._active_df = self.df["train_tgt"]
+        else:
+            raise ValueError(f"Unsupported state: {state}")
 
-    def get_user_num(self):
-        return self.user_num
+        self._active_df.reset_index(drop=True, inplace=True)
+        return self
 
-    def get_source_item_num(self):
-        return self.source_item_num
+    def set_state_for_eval(self, state):
+        assert isinstance(state, EvalDataLoaderState), "state must be a EvalDataLoaderState"
+        self.state = state
+        if state == EvalDataLoaderState.WARM:
+            self._active_df = self.df["warm_tgt"]
+        elif state == EvalDataLoaderState.COLD:
+            self._active_df = self.df["cold_tgt"]
+        self._active_df.reset_index(drop=True, inplace=True)
+        return self
 
-    def get_target_item_num(self):
-        return self.target_item_num
-
-    def get_source_df(self):
-        return self.df[self.df[self.domain_field] == 0]
-
-    def get_target_df(self):
-        return self.df[self.df[self.domain_field] == 1]
+    def get_active_df(self):
+        return self._active_df
 
     def shuffle(self):
-        """Shuffle the interaction records inplace.
-        """
-        self.df = self.df.sample(frac=1, replace=False).reset_index(drop=True)
+        if hasattr(self, "_active_df") and isinstance(self._active_df, pd.DataFrame):
+            # self._active_df = self._active_df.sample(frac=1, replace=False).reset_index(drop=True)
+            shuffled_index = np.random.permutation(len(self._active_df))
+            self._active_df.iloc[:] = self._active_df.iloc[shuffled_index].values
+        else:
+            self.logger.warning("No active DataFrame to shuffle. Did you call set_state() first?")
+        return self
 
     def __len__(self):
-        return len(self.df)
+        if hasattr(self, '_active_df'):
+            return len(self._active_df)
+        raise RuntimeError("Call set_state() before using dataset")
 
     def __getitem__(self, idx):
-        # Series result
-        return self.df.iloc[idx]
+        if not hasattr(self, '_active_df'):
+            raise RuntimeError("Call set_state() before fetching items")
+        return self._active_df.iloc[idx]
 
     def __repr__(self):
         return self.__str__()
 
     def __str__(self):
-        info = [f"Dataset name: {self.dataset_name}"]
+        lines = [
+            f"Dataset: {self.config.get('dataset', 'Unknown')} "
+            f"({' + '.join(self.config.get('domains', []))})",
+            f"Users → src: {self.num_users_src}, tgt: {self.num_users_tgt}, overlap: {self.num_users_overlap}",
+            f"Items → src: {self.num_items_src}, tgt: {self.num_items_tgt}",
+        ]
 
-        self.inter_num = len(self.df)
-        info.append(f"The number of interactions: {self.inter_num}")
-        uni_u = pd.unique(self.df[self.uid_field])
-        tmp_user_num = len(uni_u)
-        info.append(f"The number of users: {tmp_user_num}")
-        source_df = self.get_source_df()
-        target_df = self.get_target_df()
-        source_inter_num = len(source_df)
-        target_inter_num = len(target_df)
-        source_users = pd.unique(source_df[self.uid_field])
-        avg_actions_of_source_users = source_inter_num / len(source_users) if len(source_users) > 0 else 0
-        info.append(f"Average actions of source users: {avg_actions_of_source_users:.2f}")
-        target_users = pd.unique(target_df[self.uid_field])
-        avg_actions_of_target_users = target_inter_num / len(target_users) if len(target_users) > 0 else 0
-        info.append(f"Average actions of target users: {avg_actions_of_target_users:.2f}")
-        source_items = pd.unique(source_df[self.iid_field])
-        target_items = pd.unique(target_df[self.iid_field])
-        info.append(f"The number of source items: {len(source_items)}")
-        info.append(f"The number of target items: {len(target_items)}")
-        avg_actions_of_source_items = source_inter_num / len(source_items) if len(source_items) > 0 else 0
-        avg_actions_of_target_items = target_inter_num / len(target_items) if len(target_items) > 0 else 0
-        info.append(f"Average actions of source items: {avg_actions_of_source_items:.2f}")
-        info.append(f"Average actions of target items: {avg_actions_of_target_items:.2f}")
-        total_item_num = len(source_items) + len(target_items)
-        sparsity = 1 - self.inter_num / (tmp_user_num * total_item_num)
-        info.append(f"The sparsity of the dataset: {sparsity * 100:.2f}%")
-        return '\n'.join(info)
+        if self.config.get('cold_start_eval', False):
+            valid_cold = len(self.all_users.get('valid_cold_users', []))
+            test_cold = len(self.all_users.get('test_cold_users', []))
+            lines.append(f"Cold-start evaluation enabled → Valid-cold: {valid_cold}, Test-cold: {test_cold}")
+        else:
+            lines.append("Cold-start evaluation disabled")
+
+        if self.config.get('warm_eval', False):
+            lines.append(
+                f"Warm-start split → valid_ratio={self.config.get('warm_valid_ratio', 0)}, "
+                f"test_ratio={self.config.get('warm_test_ratio', 0)}"
+            )
+        else:
+            lines.append("Warm-start evaluation disabled (all warm interactions in train)")
+
+        if not len(self.df):
+            lines.append("Interaction splits:")
+            for name in ["train_src", "train_tgt", "valid_cold_tgt", "valid_warm_tgt", "test_cold_tgt", "test_warm_tgt"]:
+                if hasattr(self, name):
+                    lines.append(f"  └─ {name}: {len(getattr(self, name))}")
+
+        if hasattr(self, 'sent_emb_dim'):
+            lines.append(f"Embedding dimension: {self.sent_emb_dim}")
+
+        src_interactions = len(self.train_src) if hasattr(self, "train_src") else len(self.df["train_src"]) if "train_src" in self.df else 0
+        tgt_interactions = 0
+        if not len(self.df):
+            for name in ["train_tgt", "warm_tgt", "warm_tgt"]:
+                if hasattr(self, name):
+                    tgt_interactions += len(getattr(self, name))
+        else:
+            for name in ["train_tgt", "warm_tgt", "warm_tgt"]:
+                if name in self.df:
+                    tgt_interactions += len(self.df[name])
+
+        if self.num_users_src > 0 and self.num_items_src > 0:
+            sparsity_src = 1 - src_interactions / (self.num_users_src * self.num_items_src)
+            lines.append(f"Sparsity (source): {sparsity_src * 100:.2f}%")
+        if self.num_users_tgt > 0 and self.num_items_tgt > 0:
+            sparsity_tgt = 1 - tgt_interactions / (self.num_users_tgt * self.num_items_tgt)
+            lines.append(f"Sparsity (target): {sparsity_tgt * 100:.2f}%")
+
+        return "\n".join(lines)
+
 

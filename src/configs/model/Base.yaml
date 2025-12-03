@@ -2,9 +2,23 @@ loss_type: bpr
 dropout: 0.2
 mlp_layers: 2
 
+# multi-stage training setting,
+# (state, epochs, train_batch_size, learner, learning_rate, learning_rate_scheduler, weight_decay) is required for each stage
+# clip_grad_norm is optional
+training_stages:
+  - name: finetune_overlap
+    state: BOTH
+    epochs: 1000
+    train_batch_size: 8192
+    learner: adam
+    learning_rate: [0.005, 0.01]
+    learning_rate_scheduler: [ 1.0, 50 ]
+    weight_decay: 0.0
+    clip_grad_norm: 1.0
+
+
 feature_dim: [128]
-learning_rate: [0.005, 0.01]
 mlp_hidden_dim: [128]
 
 # hyperparameter search space
-hyper_parameters: ["feature_dim", "learning_rate", "mlp_hidden_dim"]
+hyper_parameters: ["feature_dim", "training_stages.0.learning_rate", "mlp_hidden_dim"]
