@@ -5,6 +5,7 @@
 Utility functions
 ##########################
 """
+import os
 
 import numpy as np
 import torch
@@ -12,6 +13,8 @@ import importlib
 import datetime
 import random
 from collections import defaultdict
+import gzip
+import pandas as pd
 
 
 def get_local_time():
@@ -50,6 +53,8 @@ def early_stopping(value, best, cur_step, max_step, bigger=True):
         - bool,
           whether to update
     """
+    if value == None:
+        return best, cur_step, True, False
     stop_flag = False
     update_flag = False
     if bigger:
@@ -147,3 +152,33 @@ def set_config_by_path(config, path: str, value):
         cur[int(last)] = value
     else:
         cur[last] = value
+
+def _parse_gz(self, path: str):
+    with gzip.open(path, 'r') as g:
+        for line in g:
+            line = line.replace(b'true', b'True').replace(b'false', b'False')
+            yield eval(line)
+
+def get_dict_from_raw_data_for_Amazon2014(dataset_path, domain, is_review, keys, values):
+    if is_review:
+        file_name = "reviews_" + domain + "_5.json.gz"
+        ALLOWED_FIELDS = ["reviewerID", "asin", "reviewerName", "helpful", "reviewText", "overall", "summary",
+                          "unixReviewTime", "reviewTime"]
+    else:
+        file_name = "meta_" + domain + ".json.gz"
+        ALLOWED_FIELDS = ["asin", "title", "price", "imUrl", "related", "salesRank", "brand",
+                          "description"]
+    file_path = os.path.join(dataset_path, domain, 'raw', file_name)
+
+    invalid = [f for f in keys if f not in ALLOWED_FIELDS] + [f for f in values if f not in ALLOWED_FIELDS]
+    if invalid:
+        raise ValueError(f"Invalid field(s): {invalid}. "
+                         f"Allowed fields: {ALLOWED_FIELDS}")
+
+    dict = {}
+    for inter in _parse_gz(file_path):
+        key = tuple(inter.get(f, None) for f in keys)
+        for value in values:
+            dict[key] = {value: inter[value] for value in values if value in inter}
+
+    return dict

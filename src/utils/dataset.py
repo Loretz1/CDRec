@@ -20,11 +20,12 @@ class RecDataset(object):
     BASIC_DATA_FIELDS = [
         "sent_emb_dim", "sent_embeddings",
         "positive_items_src", "positive_items_tgt",
+        "id2user_or_item"
     ]
 
     # Optional DF Field For train/valid/test, create a dict named "df" for storage of DataFrame
     DATAFRAME_FIELDS = [
-        "train_src", "train_tgt", "train_both",
+        "train_src", "train_tgt", "train_both", "train_overlap",
         "valid_cold_tgt", "test_cold_tgt",
         "valid_warm_tgt", "test_warm_tgt",
     ]
@@ -48,13 +49,17 @@ class RecDataset(object):
             for domain in ['src', 'tgt']
         }
 
-        self.all_users, user2id_src, user2id_tgt = self._split_users(all_item_seqs)
+        self.all_users, user2id_src, user2id_tgt, id2user_src, id2user_tgt = self._split_users(all_item_seqs)
 
         (self.train_src, self.train_tgt, self.valid_cold_tgt, self.test_cold_tgt, self.valid_warm_tgt,
          self.test_warm_tgt), (self.positive_items_src, self.positive_items_tgt) = self._split_interation(
             all_item_seqs, id_mapping, user2id_src, user2id_tgt)
 
-        self.train_both = self._build_train_both_df(self.train_src, self.train_tgt)
+        all_train_stages = [TrainDataLoaderState[i['state']] for i in self.config['training_stages']]
+        if TrainDataLoaderState.BOTH in all_train_stages:
+            self.train_both = self._build_train_both_df(self.train_src, self.train_tgt)
+        if TrainDataLoaderState.OVERLAP in all_train_stages:
+            self.train_overlap = self._build_train_overlap_df(self.train_src, self.train_tgt, len(self.all_users['overlap_users']))
 
         #   - The 5 user groups are mutually exclusive (no overlaps).
         #   - overlap_users: assigned to the same ID range [1 .. len(overlap_users)] in BOTH src and tgt domains.
@@ -70,6 +75,16 @@ class RecDataset(object):
             'test_cold_users': {user2id_src[u] for u in self.all_users['test_cold_users']},
             'src_only_users': {user2id_src[u] for u in self.all_users['src_only_users']},
             'tgt_only_users': {user2id_tgt[u] for u in self.all_users['tgt_only_users']}
+        }
+        self.id2user_or_item ={
+            "src": {
+                "id2user": id2user_src,
+                "id2item": id_mapping['src']['id2item']
+            },
+            "tgt": {
+                "id2user": id2user_tgt,
+                "id2item": id_mapping['tgt']['id2item']
+            }
         }
         self.num_users_overlap = len(self.all_users['overlap_users'])
         self.num_users_src = len(self.all_users['overlap_users']) + len(self.all_users['valid_cold_users']) + len(self.all_users['test_cold_users']) + len(self.all_users['src_only_users'])
@@ -129,17 +144,21 @@ class RecDataset(object):
         # Reindex User ID for Each Domain
         # Overlapped User: 1 -> num(overlap_users)
         # Single Domain User: num(overlap_users) + 1 -> num(domain_user)
-        user2id_src = {}
-        user2id_tgt = {}
+        user2id_src, user2id_tgt = {}, {}
+        id2user_src, id2user_tgt = ["PAD"], ["PAD"]
         for i, u in enumerate(all_users['overlap_users'], start=1):
             user2id_src[u] = i
+            id2user_src.append(u)
             user2id_tgt[u] = i
+            id2user_tgt.append(u)
         for i, u in enumerate(all_users['valid_cold_users'] | all_users['test_cold_users'] | all_users[
             'src_only_users'], start=len(all_users['overlap_users']) + 1):
             user2id_src[u] = i
+            id2user_src.append(u)
         for i, u in enumerate(all_users['tgt_only_users'], start=len(all_users['overlap_users']) + 1):
             user2id_tgt[u] = i
-        return all_users, user2id_src, user2id_tgt
+            id2user_tgt.append(u)
+        return all_users, user2id_src, user2id_tgt, id2user_src, id2user_tgt
 
     def _split_interation(self, all_item_seqs, id_mapping, user2id_src, user2id_tgt):
         train_src, train_tgt = [], []
@@ -206,12 +225,26 @@ class RecDataset(object):
 
         return pd.concat([src_df, tgt_df], axis=0, ignore_index=True)
 
+    def _build_train_overlap_df(self, df_src, df_tgt, overlap_u_max_id):
+        src_df = df_src.copy()
+        src_df["domain"] = 0
+        src_df = src_df[src_df["user"] <= overlap_u_max_id]
+
+        tgt_df = df_tgt.copy()
+        tgt_df["domain"] = 1
+        tgt_df = tgt_df[tgt_df["user"] <= overlap_u_max_id]
+
+        return pd.concat([src_df, tgt_df], axis=0, ignore_index=True)
+
     def split(self):
         train_dataset = self.copy(
-            keep_fields=["train_both", "train_src", "train_tgt", "sent_emb_dim", "sent_embeddings",
-                         "positive_items_src", "positive_items_tgt"])
-        valid_dataset = self.copy(keep_fields=["valid_cold_tgt", "valid_warm_tgt", "positive_items_tgt"])
-        test_dataset = self.copy(keep_fields=["test_cold_tgt", "test_warm_tgt", "positive_items_tgt"])
+            keep_fields=["train_both", "train_src", "train_tgt", "train_overlap",
+                         "sent_emb_dim", "sent_embeddings",
+                         "positive_items_src", "positive_items_tgt", "id2user_or_item"])
+        valid_dataset = self.copy(keep_fields=["valid_cold_tgt", "valid_warm_tgt",
+                                               "positive_items_tgt"])
+        test_dataset = self.copy(keep_fields=["test_cold_tgt", "test_warm_tgt",
+                                              "positive_items_tgt"])
         valid_dataset.df["cold_tgt"] = valid_dataset.df.pop("valid_cold_tgt")
         valid_dataset.df["warm_tgt"] = valid_dataset.df.pop("valid_warm_tgt")
         test_dataset.df["cold_tgt"] = test_dataset.df.pop("test_cold_tgt")
@@ -240,19 +273,11 @@ class RecDataset(object):
             self._active_df = self.df["train_src"]
         elif state == TrainDataLoaderState.TARGET:
             self._active_df = self.df["train_tgt"]
+        elif state == TrainDataLoaderState.OVERLAP:
+            self._active_df = self.df["train_overlap"]
         else:
             raise ValueError(f"Unsupported state: {state}")
 
-        self._active_df.reset_index(drop=True, inplace=True)
-        return self
-
-    def set_state_for_eval(self, state):
-        assert isinstance(state, EvalDataLoaderState), "state must be a EvalDataLoaderState"
-        self.state = state
-        if state == EvalDataLoaderState.WARM:
-            self._active_df = self.df["warm_tgt"]
-        elif state == EvalDataLoaderState.COLD:
-            self._active_df = self.df["cold_tgt"]
         self._active_df.reset_index(drop=True, inplace=True)
         return self
 

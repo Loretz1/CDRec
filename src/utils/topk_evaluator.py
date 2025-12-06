@@ -55,7 +55,7 @@ class TopKEvaluator(object):
 
         return topk_index
 
-    def evaluate(self, batch_matrix_list, eval_data, domain=0, is_test=False, idx=0):
+    def evaluate(self, batch_matrix_list, eval_data, is_test=False, idx=0, is_warm=True):
         """calculate the metrics of all batches. It is called at the end of each epoch
 
         Args:
@@ -69,21 +69,22 @@ class TopKEvaluator(object):
         """
         pos_items_all = eval_data.get_eval_items()
         pos_len_all = eval_data.get_eval_len_list()
-        pos_items = pos_items_all[domain]
-        pos_len_list = pos_len_all[domain]
+        pos_items = pos_items_all
+        pos_len_list = pos_len_all
         topk_index = torch.cat(batch_matrix_list, dim=0).cpu().numpy()
         # if save recommendation result?
         if self.save_recom_result and is_test:
             dataset_name = self.config['dataset']
+            domains_name = '+'.join(self.config['domains'])
             model_name = self.config['model']
+            category_name = "warm" if is_warm else "cold"
             max_k = max(self.topk)
             dir_name = os.path.abspath(self.config['recommend_topk'])
             if not os.path.exists(dir_name):
                 os.makedirs(dir_name)
-            domain_name = "source" if domain == 0 else "target"
             file_path = os.path.join(
                 dir_name,
-                f"{model_name}-{dataset_name}-{domain_name}-idx{idx}-top{max_k}-{get_local_time()}.csv"
+                f"{model_name}-{dataset_name}-{domains_name}-{category_name}-idx{idx}-top{max_k}-{get_local_time()}.csv"
             )
             x_df = pd.DataFrame(topk_index)
             x_df.insert(0, 'id', eval_data.get_eval_users())

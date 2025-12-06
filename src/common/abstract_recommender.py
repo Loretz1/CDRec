@@ -12,9 +12,10 @@ class AbstractRecommender(nn.Module):
     def post_epoch_processing(self):
         pass
 
-    def set_train_stage(self):
+    def set_train_stage(self, stage_id):
         r"""
          Configure the model for the current training stage.
+         Control which parameters participate in gradient updates, freeze or unfreeze model components by adjusting `requires_grad`.
         """
         pass
 
@@ -29,16 +30,16 @@ class AbstractRecommender(nn.Module):
         """
         raise NotImplementedError
 
-    def full_sort_predict(self, interaction):
+    def full_sort_predict(self, interaction, is_warm):
         r"""full sort prediction function.
-        Given users, calculate the scores between users and all candidate items.
+        Given users, calculate the scores between users and all target items.
 
         Args:
             interaction (Interaction): Interaction class of the batch.
 
         Returns:
-            torch.Tensor: Predicted scores for given users and all candidate items,
-            shape: [n_batch_users * n_candidate_items]
+            torch.Tensor: Predicted scores for given users and all target items, which includes item 0 which is 'PAD'
+            shape: [n_batch_users * (n_target_items + 1)]
         """
         raise NotImplementedError
 
@@ -66,3 +67,7 @@ class GeneralRecommender(AbstractRecommender):
         self.num_items_tgt = dataloader.dataset.num_items_tgt
 
         self.device = config['device']
+        self.stage_id = None
+
+    def set_train_stage(self, stage_id):
+        self.stage_id = stage_id

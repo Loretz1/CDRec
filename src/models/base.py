@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from common.abstract_recommender import GeneralRecommender
 from common.init import xavier_uniform_initialization
 from common.loss import BPRLoss
@@ -16,10 +15,10 @@ class Base(GeneralRecommender):
         self.dropout = config["dropout"]
         self.loss_type = config["loss_type"].lower()
 
-        self.source_user_embedding = nn.Embedding(self.num_users_src, self.feature_dim)
-        self.target_user_embedding = nn.Embedding(self.num_users_tgt, self.feature_dim)
-        self.source_item_embedding = nn.Embedding(self.num_items_src, self.feature_dim)
-        self.target_item_embedding = nn.Embedding(self.num_items_tgt, self.feature_dim)
+        self.source_user_embedding = nn.Embedding(self.num_users_src + 1, self.feature_dim)
+        self.target_user_embedding = nn.Embedding(self.num_users_tgt + 1, self.feature_dim)
+        self.source_item_embedding = nn.Embedding(self.num_items_src + 1, self.feature_dim)
+        self.target_item_embedding = nn.Embedding(self.num_items_tgt + 1, self.feature_dim)
 
         def make_mlp(in_dim, hidden_dim, layers):
             mlp = []
@@ -62,11 +61,16 @@ class Base(GeneralRecommender):
 
         return user_emb, pos_emb, neg_emb
 
-    def calculate_loss(self, interaction, epoch_idx):
-        user, src_pos, src_neg, tgt_pos, tgt_neg = interaction
+    def calculate_loss_for_0(self, interaction):
+        user_src = interaction['users_src']
+        src_pos = interaction['pos_items_src']
+        src_neg = interaction['neg_items_src']
+        user_tgt = interaction['users_tgt']
+        tgt_pos = interaction['pos_items_tgt']
+        tgt_neg = interaction['neg_items_tgt']
 
-        src_user, src_pos_emb, src_neg_emb = self.forward(user, src_pos, src_neg, domain=0)
-        tgt_user, tgt_pos_emb, tgt_neg_emb = self.forward(user, tgt_pos, tgt_neg, domain=1)
+        src_user, src_pos_emb, src_neg_emb = self.forward(user_src, src_pos, src_neg, domain=0)
+        tgt_user, tgt_pos_emb, tgt_neg_emb = self.forward(user_tgt, tgt_pos, tgt_neg, domain=1)
 
         pos_src = (src_user * src_pos_emb).sum(dim=-1)
         neg_src = (src_user * src_neg_emb).sum(dim=-1)
@@ -89,21 +93,22 @@ class Base(GeneralRecommender):
 
         return loss
 
-    def full_sort_predict(self, interaction):
+    def calculate_loss(self, interaction, epoch_idx):
+        if self.stage_id == 0:
+            return self.calculate_loss_for_0(interaction)
+
+    def full_sort_predict(self, interaction, is_warm):
         user = interaction[0].long()
+        if is_warm:
+            user_emb = self.target_user_embedding(user)
+            user_emb = self.target_mlp(user_emb)
+        else:
+            user_emb = self.source_user_embedding(user)
+            user_emb = self.source_mlp(user_emb)
+        all_tgt_items_emb = self.target_item_embedding.weight
+        all_tgt_items_emb = self.target_mlp(all_tgt_items_emb)
+        scores_tgt = torch.matmul(user_emb, all_tgt_items_emb.T)  # [B, n_target_items + 1]
+        return scores_tgt
 
-        src_user = self.source_user_embedding(user)
-        tgt_user = self.target_user_embedding(user)
-
-        all_src_items = self.source_item_embedding.weight
-        all_tgt_items = self.target_item_embedding.weight
-
-        src_user = self.source_mlp(src_user)
-        tgt_user = self.target_mlp(tgt_user)
-        src_items = self.source_mlp(all_src_items)
-        tgt_items = self.target_mlp(all_tgt_items)
-
-        scores_src = torch.matmul(src_user, src_items.T)  # [B, n_source_items]
-        scores_tgt = torch.matmul(tgt_user, tgt_items.T)  # [B, n_target_items]
-
-        return scores_src, scores_tgt
+    def set_train_stage(self, stage_id):
+        super(Base, self).set_train_stage(stage_id)

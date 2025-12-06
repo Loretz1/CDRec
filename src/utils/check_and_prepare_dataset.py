@@ -72,15 +72,11 @@ def create_joint_dataset(domains: List[str], config: dict):
         all_item_seqs_src = json.load(f)
     with open(os.path.join(src_path, 'id_mapping.json'), 'r') as f:
         id_mapping_src = json.load(f)
-    with open(os.path.join(src_path, 'metadata.sentence.json')) as f:
-        item2meta_src = json.load(f)
     embeddings_src = np.load(os.path.join(src_path, embedding_filename))
     with open(os.path.join(tgt_path, 'all_item_seqs.json'), 'r') as f:
         all_item_seqs_tgt = json.load(f)
     with open(os.path.join(tgt_path, 'id_mapping.json'), 'r') as f:
         id_mapping_tgt = json.load(f)
-    with open(os.path.join(tgt_path, 'metadata.sentence.json')) as f:
-        item2meta_tgt = json.load(f)
     embeddings_tgt = np.load(os.path.join(tgt_path, embedding_filename))
 
     if config['only_overlap_users']:
@@ -142,8 +138,6 @@ def create_joint_dataset(domains: List[str], config: dict):
 
         id_mapping_src_filtered = rebuild_id_mapping(final_users, final_items_src)
         id_mapping_tgt_filtered = rebuild_id_mapping(final_users, final_items_tgt)
-        item2meta_src = {i: item2meta_src[i] for i in final_items_src if i in item2meta_src}
-        item2meta_tgt = {i: item2meta_tgt[i] for i in final_items_tgt if i in item2meta_tgt}
         embeddings_src = embeddings_src[[id_mapping_src['item2id'][i] - 1 for i in final_items_src]]
         embeddings_tgt = embeddings_tgt[[id_mapping_tgt['item2id'][i] - 1 for i in final_items_tgt]]
         id_mapping_src = id_mapping_src_filtered
@@ -171,15 +165,11 @@ def create_joint_dataset(domains: List[str], config: dict):
         json.dump(all_item_seqs_src, f)
     with open(os.path.join(joint_path, 'src', 'id_mapping.json'), 'w') as f:
         json.dump(id_mapping_src, f)
-    with open(os.path.join(joint_path, 'src', 'metadata.sentence.json'), 'w') as f:
-        json.dump(item2meta_src, f)
     np.save(os.path.join(joint_path, 'src', f'final_sent_embeddings_{sent_emb_dim}.npy'), embeddings_src)
     with open(os.path.join(joint_path, 'tgt', 'all_item_seqs.json'), 'w') as f:
         json.dump(all_item_seqs_tgt, f)
     with open(os.path.join(joint_path, 'tgt', 'id_mapping.json'), 'w') as f:
         json.dump(id_mapping_tgt, f)
-    with open(os.path.join(joint_path, 'tgt', 'metadata.sentence.json'), 'w') as f:
-        json.dump(item2meta_tgt, f)
     np.save(os.path.join(joint_path, 'tgt', f'final_sent_embeddings_{sent_emb_dim}.npy'), embeddings_tgt)
 
     logger.info(f"\n[JOINT] All joint dataset files created successfully!")
@@ -228,11 +218,9 @@ def check_and_prepare_Amazon2014(config):
     required_joint_files = [
         os.path.join(joint_path, 'src', 'all_item_seqs.json'),
         os.path.join(joint_path, 'src', 'id_mapping.json'),
-        os.path.join(joint_path, 'src', 'metadata.sentence.json'),
         os.path.join(joint_path, 'src', f'final_sent_embeddings_{sent_emb_dim}.npy'),
         os.path.join(joint_path, 'tgt', 'all_item_seqs.json'),
         os.path.join(joint_path, 'tgt', 'id_mapping.json'),
-        os.path.join(joint_path, 'tgt', 'metadata.sentence.json'),
         os.path.join(joint_path, 'tgt', f'final_sent_embeddings_{sent_emb_dim}.npy')
     ]
 

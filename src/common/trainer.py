@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from time import time
 from logging import getLogger
 
+from utils.enum_type import EvalDataLoaderState
 from utils.utils import early_stopping, metrics_dict2str
 from utils.topk_evaluator import TopKEvaluator
 
@@ -20,7 +21,7 @@ class AbstractTrainer(object):
         self.config = config
         self.model = model
 
-    def fit(self, train_data):
+    def fit(self, stage_id, train_data):
         r"""Train the model based on the train data.
 
         """
@@ -68,44 +69,49 @@ class Trainer(AbstractTrainer):
         self.req_training = config['req_training']
 
         self.start_epoch = 0
-        self.cur_step = 0
+        self.cur_step_warm = 0
+        self.cur_step_cold = 0
 
         tmp_dd = {}
         for j, k in list(itertools.product(config['metrics'], config['topk'])):
             tmp_dd[f'{j.lower()}@{k}'] = 0.0
-        self.best_valid_score = -1
-        self.best_valid_result= tmp_dd.copy()
-        self.best_test_upon_valid = tmp_dd.copy()
+        self.best_valid_score_warm = -1
+        self.best_valid_score_cold = -1
+        self.best_valid_result_warm= tmp_dd.copy()
+        self.best_valid_result_cold = tmp_dd.copy()
+        self.best_test_upon_valid_warm = tmp_dd.copy()
+        self.best_test_upon_valid_cold = tmp_dd.copy()
         self.train_loss_dict = dict()
         self.optimizer = None
-
-        # fac = lambda epoch: 0.96 ** (epoch / 50)
-        # lr_scheduler = config['learning_rate_scheduler']  # check zero?
-        # fac = lambda epoch: lr_scheduler[0] ** (epoch / lr_scheduler[1])
-        # scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=fac)
-        # self.lr_scheduler = scheduler
+        self.learning_rate_scheduler = None
         self.lr_scheduler = None
 
+        self.eval = None
         self.evaluator = TopKEvaluator(config)
 
-    def _build_optimizer(self):
+    def _build_optimizer(self, params):
         r"""Init the Optimizer
 
         Returns:
             torch.optim: the optimizer
         """
         if self.learner.lower() == 'adam':
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+            optimizer = optim.Adam(params, lr=self.learning_rate, weight_decay=self.weight_decay)
         elif self.learner.lower() == 'sgd':
-            optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+            optimizer = optim.SGD(params, lr=self.learning_rate, weight_decay=self.weight_decay)
         elif self.learner.lower() == 'adagrad':
-            optimizer = optim.Adagrad(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+            optimizer = optim.Adagrad(params, lr=self.learning_rate, weight_decay=self.weight_decay)
         elif self.learner.lower() == 'rmsprop':
-            optimizer = optim.RMSprop(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+            optimizer = optim.RMSprop(params, lr=self.learning_rate, weight_decay=self.weight_decay)
         else:
             self.logger.warning('Received unrecognized optimizer, set default Adam optimizer')
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            optimizer = optim.Adam(params, lr=self.learning_rate)
         return optimizer
+
+    def _build_lr_scheduler(self):
+        fac = lambda epoch: self.learning_rate_scheduler[0] ** (epoch / self.learning_rate_scheduler[1])
+        scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=fac)
+        return scheduler
 
     def _train_epoch(self, train_data, epoch_idx, loss_func=None):
         r"""Train the model in an epoch
@@ -129,7 +135,6 @@ class Trainer(AbstractTrainer):
         loss_batches = []
         for batch_idx, interaction in enumerate(train_data):
             self.optimizer.zero_grad()
-            second_inter = interaction.clone()
             losses = loss_func(interaction, epoch_idx)
 
             if isinstance(losses, tuple):
@@ -164,55 +169,69 @@ class Trainer(AbstractTrainer):
             float: valid score
             dict: valid result
         """
-        valid_result_src, valid_result_tgt = self.evaluate(valid_data)
-        valid_score_src = valid_result_src[self.valid_metric] if self.valid_metric else valid_result_src['NDCG@20']
-        valid_score_tgt = valid_result_tgt[self.valid_metric] if self.valid_metric else valid_result_tgt['NDCG@20']
-        return valid_score_src, valid_result_src, valid_score_tgt, valid_result_tgt
+        valid_result_warm, valid_result_cold = self.evaluate(valid_data)
+        valid_score_warm = None if not valid_data.warm else valid_result_warm[self.valid_metric] if self.valid_metric else valid_result_warm['NDCG@20']
+        valid_score_cold = None if not valid_data.cold else valid_result_cold[self.valid_metric] if self.valid_metric else valid_result_cold['NDCG@20']
+        return valid_score_warm, valid_result_warm, valid_score_cold, valid_result_cold
 
     def _check_nan(self, loss):
         if torch.isnan(loss):
             # raise ValueError('Training loss is nan')
             return True
 
-    def _generate_train_loss_output(self, epoch_idx, s_time, e_time, losses):
+    def _generate_train_loss_output(self, stage_id, epoch_idx, s_time, e_time, losses):
         duration = e_time - s_time
         if isinstance(losses, tuple):
             loss_str = ' | '.join(f"Loss{i + 1}: {loss:.4f}" for i, loss in enumerate(losses))
         else:
             loss_str = f"Total Loss: {losses:.4f}"
         train_output = (
-            f"\n{'=' * 30} [Epoch {epoch_idx}] Training Summary {'=' * 30}\n"
+            f"\n{'=' * 30} [Stage {stage_id}, Epoch {epoch_idx}] Training Summary {'=' * 30}\n"
             f"⏱  Time used: {duration:.2f}s\n"
             f"📉 {loss_str}\n"
             f"{'=' * 90}"
         )
         return train_output
 
-    def _generate_eval_output(self, epoch_idx, mode, results_src, results_tgt,
-                              score_src=None, score_tgt=None,
-                              best_src=None, best_tgt=None,
-                              update_src=False, update_tgt=False,
-                              stop_src=False, stop_tgt=False,
+    def _generate_eval_output(self, epoch_idx, mode,
+                              results_warm, results_cold,
+                              score_warm=None, score_cold=None,
+                              best_warm=None, best_cold=None,
+                              update_warm=False, update_cold=False,
+                              stop_warm=False, stop_cold=False,
                               elapsed_time=None):
-        header = f"\n{'=' * 30} [Epoch {epoch_idx}] {mode} Summary {'=' * 30}\n"
-        time_str = f"⏱  Time used: {elapsed_time:.2f}s\n\n" if elapsed_time else ""
-        src_block = (
-                f"🌐 Source Domain:\n"
-                + (f"   {mode} Score: {score_src:.6f} | Best: {best_src:.6f} "
-                   f"| {'✅ Updated' if update_src else '❌ No Update'} "
-                   f"| {'🛑 Early Stop' if stop_src else ''}\n" if score_src else "")
-                + f"   Metrics:\n{metrics_dict2str(results_src)}\n\n"
-        )
-        tgt_block = (
-                f"🎯 Target Domain:\n"
-                + (f"   {mode} Score: {score_tgt:.6f} | Best: {best_tgt:.6f} "
-                   f"| {'✅ Updated' if update_tgt else '❌ No Update'} "
-                   f"| {'🛑 Early Stop' if stop_tgt else ''}\n" if score_tgt else "")
-                + f"   Metrics:\n{metrics_dict2str(results_tgt)}\n"
-        )
-        return header + time_str + src_block + tgt_block + f"{'=' * 90}"
+        eval_output = ""
 
-    def fit(self, train_data, valid_data=None, test_data=None, saved=False, verbose=True):
+        header = f"\n{'=' * 30} [Epoch {epoch_idx}] {mode} Summary {'=' * 30}\n"
+        eval_output += header
+
+        time_str = f"⏱  Time used: {elapsed_time:.2f}s\n\n" if elapsed_time else ""
+        eval_output += time_str
+
+        if self.config['warm_eval']:
+            warm_block = (
+                    f"🔥 Warm-start Users:\n"
+                    + (f"   {mode} Score: {score_warm:.6f} | Best: {best_warm:.6f} "
+                       f"| {'✅ Updated' if update_warm else '❌ No Update'} "
+                       f"| {'🛑 Early Stop' if stop_warm else ''}\n" if score_warm is not None else "")
+                    + f"   Metrics:\n{metrics_dict2str(results_warm)}\n\n"
+            )
+            eval_output += warm_block
+
+        if self.config['cold_start_eval']:
+            cold_block = (
+                    f"🎯 Cold-start Users:\n"
+                    + (f"   {mode} Score: {score_cold:.6f} | Best: {best_cold:.6f} "
+                       f"| {'✅ Updated' if update_cold else '❌ No Update'} "
+                       f"| {'🛑 Early Stop' if stop_cold else ''}\n" if score_cold else "")
+                    + f"   Metrics:\n{metrics_dict2str(results_cold)}\n"
+            )
+            eval_output += cold_block
+
+        eval_output += f"{'=' * 90}"
+        return eval_output
+
+    def fit(self, stage_id, train_data, valid_data=None, test_data=None, saved=False, verbose=True):
         for epoch_idx in range(self.start_epoch, self.epochs):
             # train
             training_start_time = time()
@@ -225,72 +244,80 @@ class Trainer(AbstractTrainer):
             #    print('======lr: ', param_group['lr'])
             self.lr_scheduler.step()
 
-            self.train_loss_dict[epoch_idx] = sum(train_loss) if isinstance(train_loss, tuple) else train_loss
+            self.train_loss_dict[(stage_id, epoch_idx)] = sum(train_loss) if isinstance(train_loss, tuple) else train_loss
             training_end_time = time()
             train_loss_output = \
-                self._generate_train_loss_output(epoch_idx, training_start_time, training_end_time, train_loss)
+                self._generate_train_loss_output(stage_id, epoch_idx, training_start_time, training_end_time, train_loss)
             post_info = self.model.post_epoch_processing()
             if verbose:
                 self.logger.info(train_loss_output)
                 if post_info is not None:
                     self.logger.info(post_info)
 
+            if not self.eval:
+                continue
+
             # eval: To ensure the test result is the best model under validation data, set self.eval_step == 1
             if (epoch_idx + 1) % self.eval_step == 0:
                 valid_start_time = time()
-                valid_score_src, valid_result_src, valid_score_tgt, valid_result_tgt = self._valid_epoch(valid_data)
+                valid_score_warm, valid_result_warm, valid_score_cold, valid_result_cold = self._valid_epoch(valid_data)
 
-                self.best_valid_score_src, self.cur_step_src, stop_flag_src, update_flag_src = early_stopping(
-                    valid_score_src, self.best_valid_score_src, self.cur_step_src,
+                self.best_valid_score_warm, self.cur_step_warm, stop_flag_warm, update_flag_warm = early_stopping(
+                    valid_score_warm, self.best_valid_score_warm, self.cur_step_warm,
                     max_step=self.stopping_step, bigger=self.valid_metric_bigger)
-                self.best_valid_score_tgt, self.cur_step_tgt, stop_flag_tgt, update_flag_tgt = early_stopping(
-                    valid_score_tgt, self.best_valid_score_tgt, self.cur_step_tgt,
+                self.best_valid_score_cold, self.cur_step_cold, stop_flag_cold, update_flag_cold = early_stopping(
+                    valid_score_cold, self.best_valid_score_cold, self.cur_step_cold,
                     max_step=self.stopping_step, bigger=self.valid_metric_bigger)
                 valid_end_time = time()
                 valid_output = self._generate_eval_output(epoch_idx, "Validation",
-                                                          valid_result_src, valid_result_tgt,
-                                                          valid_score_src, valid_score_tgt,
-                                                          self.best_valid_score_src, self.best_valid_score_tgt,
-                                                          update_flag_src, update_flag_tgt,
-                                                          stop_flag_src, stop_flag_tgt,
+                                                          valid_result_warm, valid_result_cold,
+                                                          valid_score_warm, valid_score_cold,
+                                                          self.best_valid_score_warm, self.best_valid_score_cold,
+                                                          update_flag_warm, update_flag_cold,
+                                                          stop_flag_warm, stop_flag_cold,
                                                           valid_end_time - valid_start_time)
                 # test
-                _, test_result_src, _, test_result_tgt = self._valid_epoch(test_data)
+                _, test_result_warm, _, test_result_cold = self._valid_epoch(test_data)
                 test_output = self._generate_eval_output(epoch_idx, "Test",
-                                                         test_result_src, test_result_tgt)
+                                                         test_result_warm, test_result_cold)
                 if verbose:
                     self.logger.info(valid_output)
                     self.logger.info(test_output)
-                if update_flag_src:
-                    update_output_src = f"██ {self.config['model']} -- 🌐 Source Domain best validation results updated!!!"
+                if update_flag_warm:
+                    update_output_warm = f"██ {self.config['model']} -- 🌐 Warm-start validation result improved — best score updated!!!"
                     if verbose:
-                        self.logger.info(update_output_src)
-                    self.best_valid_result_src = valid_result_src
-                    self.best_test_upon_valid_src = test_result_src
-                if update_flag_tgt:
-                    update_output_tgt = f"██ {self.config['model']} -- 🎯 Target Domain best validation results updated!!!"
+                        self.logger.info(update_output_warm)
+                    self.best_valid_result_warm = valid_result_warm
+                    self.best_test_upon_valid_warm = test_result_warm
+                if update_flag_cold:
+                    update_output_cold = f"██ {self.config['model']} -- 🎯 Cold-start validation result improved — best score updated!!!"
                     if verbose:
-                        self.logger.info(update_output_tgt)
-                    self.best_valid_result_tgt = valid_result_tgt
-                    self.best_test_upon_valid_tgt = test_result_tgt
+                        self.logger.info(update_output_cold)
+                    self.best_valid_result_cold = valid_result_cold
+                    self.best_test_upon_valid_cold = test_result_cold
 
-                if stop_flag_src and stop_flag_tgt:
+                if stop_flag_warm and stop_flag_cold:
                     stop_msg = f"+++++ Finished training at epoch {epoch_idx}, best eval results:"
                     if verbose:
                         self.logger.info(stop_msg)
-                        stop_output_src = (
-                            f"🛑 Early stopping triggered for 🌐 Source Domain "
-                            f"(best epoch: {epoch_idx - self.cur_step_src * self.eval_step})"
-                        )
-                        stop_output_tgt = (
-                            f"🛑 Early stopping triggered for 🎯 Target Domain "
-                            f"(best epoch: {epoch_idx - self.cur_step_tgt * self.eval_step})"
-                        )
-                        self.logger.info(stop_output_src)
-                        self.logger.info(stop_output_tgt)
+                        if self.config['warm_eval']:
+                            stop_output_src = (
+                                f"🛑 Early stopping triggered for 🌐 Warm-Start Evaluation "
+                                f"(best epoch: {epoch_idx - self.cur_step_warm * self.eval_step})"
+                            )
+                            self.logger.info(stop_output_src)
+                        if self.config['cold_start_eval']:
+                            stop_output_tgt = (
+                                f"🛑 Early stopping triggered for 🎯 Cold-Start Evaluation "
+                                f"(best epoch: {epoch_idx - self.cur_step_cold * self.eval_step})"
+                            )
+                            self.logger.info(stop_output_tgt)
                     break
-        return (self.best_valid_score_src, self.best_valid_result_src, self.best_test_upon_valid_src,
-                self.best_valid_score_tgt, self.best_valid_result_tgt, self.best_test_upon_valid_tgt)
+
+        if not self.eval:
+            return (None, None, None, None, None, None)
+        return (self.best_valid_score_warm, self.best_valid_result_warm, self.best_test_upon_valid_warm,
+                self.best_valid_score_cold, self.best_valid_result_cold, self.best_test_upon_valid_cold)
 
     @torch.no_grad()
     def evaluate(self, eval_data, is_test=False, idx=0):
@@ -301,23 +328,39 @@ class Trainer(AbstractTrainer):
         self.model.eval()
 
         # batch full users
-        src_batch_matrix_list, tgt_batch_matrix_list = [],[]
-        for batch_idx, batched_data in enumerate(eval_data):
-            # predict: interaction without item ids
-            src_scores, tgt_scores = self.model.full_sort_predict(batched_data)
-            src_masked_items = batched_data[1]
-            tgt_masked_items = batched_data[2]
-            # mask out pos items
-            src_scores[src_masked_items[0], src_masked_items[1]] = -1e10
-            tgt_scores[tgt_masked_items[0], tgt_masked_items[1]] = -1e10
-            # rank and get top-k
-            _, src_topk_index = torch.topk(src_scores, max(self.config['topk']), dim=-1)
-            _, tgt_topk_index = torch.topk(tgt_scores, max(self.config['topk']), dim=-1)
-            src_batch_matrix_list.append(src_topk_index)
-            tgt_batch_matrix_list.append(tgt_topk_index)
-        src_result = self.evaluator.evaluate(src_batch_matrix_list, eval_data, domain = 0, is_test=is_test, idx=idx)
-        tgt_result = self.evaluator.evaluate(tgt_batch_matrix_list, eval_data, domain = 1, is_test=is_test, idx=idx)
-        return src_result, tgt_result
+        batch_matrix_list_warm, batch_matrix_list_cold = None, None
+        # warm eval
+        if eval_data.warm:
+            batch_matrix_list_warm = []
+            eval_data.set_state_for_eval(EvalDataLoaderState.WARM)
+            for batch_idx, batched_data in enumerate(eval_data):
+                # predict: interaction without item ids
+                scores = self.model.full_sort_predict(batched_data, is_warm=True)
+                masked_items = batched_data[1]
+                # mask out pos items
+                scores[masked_items[0], masked_items[1]] = -1e10
+                # mask the item 0 which is PAD
+                scores[:, 0] = -1e10
+                # rank and get top-k
+                _, topk_index = torch.topk(scores, max(self.config['topk']), dim=-1)
+                batch_matrix_list_warm.append(topk_index)
+            result_warm = self.evaluator.evaluate(batch_matrix_list_warm, eval_data, is_test=is_test, idx=idx,is_warm=True)
+        # cold eval
+        if eval_data.cold:
+            batch_matrix_list_cold = []
+            eval_data.set_state_for_eval(EvalDataLoaderState.COLD)
+            for batch_idx, batched_data in enumerate(eval_data):
+                # predict: interaction without item ids
+                scores = self.model.full_sort_predict(batched_data, is_warm=False)
+                masked_items = batched_data[1]
+                # mask out pos items
+                scores[masked_items[0], masked_items[1]] = -1e10
+                # rank and get top-k
+                _, topk_index = torch.topk(scores, max(self.config['topk']), dim=-1)
+                batch_matrix_list_cold.append(topk_index)
+            result_cold = self.evaluator.evaluate(batch_matrix_list_cold, eval_data, is_test=is_test, idx=idx,is_warm=False)
+
+        return result_warm, result_cold
 
     def plot_train_loss(self, show=True, save_path=None):
         r"""Plot the train loss in each epoch
@@ -339,3 +382,15 @@ class Trainer(AbstractTrainer):
         if save_path:
             plt.savefig(save_path)
 
+    def set_train_stage(self, stage_id, stage_config, eval = False):
+        train_keys = ["epochs", "learner", "learning_rate", "learning_rate_scheduler", "weight_decay", "clip_grad_norm"]
+
+        for key in train_keys:
+            setattr(self, key, None)
+            if key in stage_config:
+                setattr(self, key, stage_config[key])
+
+        self.model.set_train_stage(stage_id)
+        self.optimizer = self._build_optimizer(params=filter(lambda p: p.requires_grad, self.model.parameters()))
+        self.lr_scheduler = self._build_lr_scheduler()
+        self.eval = eval

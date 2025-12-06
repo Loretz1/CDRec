@@ -1,24 +1,28 @@
-loss_type: bpr
-dropout: 0.2
-mlp_layers: 2
+# 1. Eval Setting
+warm_eval: True  # Whether to enable warm user evaluation
+cold_start_eval: True # Whether to enable cold start user evaluation
 
-# multi-stage training setting,
+# 2. Multi-stage Training Setting
 # (state, epochs, train_batch_size, learner, learning_rate, learning_rate_scheduler, weight_decay) is required for each stage
 # clip_grad_norm is optional
 training_stages:
-  - name: finetune_overlap
+  - name: both_training
     state: BOTH
     epochs: 1000
-    train_batch_size: 8192
+    train_batch_size: 81920
     learner: adam
     learning_rate: [0.005, 0.01]
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
-    clip_grad_norm: 1.0
+#    clip_grad_norm: {"max_norm": 1.0}
 
+# 3. Fixed Model Parameters Setting
+loss_type: bpr
+dropout: 0.2
+mlp_layers: 2
 
+# 4. Model Hyperparameter Search Setting
 feature_dim: [128]
 mlp_hidden_dim: [128]
-
 # hyperparameter search space
 hyper_parameters: ["feature_dim", "training_stages.0.learning_rate", "mlp_hidden_dim"]

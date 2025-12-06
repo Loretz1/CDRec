@@ -111,6 +111,8 @@ class TrainDataLoader(AbstractDataLoader):
             return self._sample_single_domain
         elif self.state == TrainDataLoaderState.BOTH:
             return self._sample_both
+        elif self.state == TrainDataLoaderState.OVERLAP:
+            return self._sample_overlap
         return None
 
     def _sample_single_domain(self):
@@ -188,22 +190,68 @@ class TrainDataLoader(AbstractDataLoader):
             "neg_items_tgt": torch.tensor(neg_items_tgt, dtype=torch.long, device=self.device)
         }
 
+    def _sample_overlap(self):
+        """
+        Returns:
+        dict: {
+            "users_src": Tensor(batch_size),
+            "pos_items_src": Tensor(batch_size),
+            "neg_items_src": Tensor(batch_size)
+            "pos_items_tgt": Tensor(batch_size),
+            "neg_items_tgt": Tensor(batch_size)
+        }
+        """
+        cur_data = self.dataset[self.pr: self.pr + self.batch_size]
+        self.pr += self.batch_size
+
+        users = []
+        pos_items_src, neg_items_src = [], []
+        pos_items_tgt, neg_items_tgt = [], []
+
+        for _, row in cur_data.iterrows():
+            u, i, d = row["user"], row["item"], row["domain"]
+            users.append(u)
+            neg_items_src.append(self._sample_neg_item_from_domain_for_u(u, domain=0))
+            neg_items_tgt.append(self._sample_neg_item_from_domain_for_u(u, domain=1))
+            if d == 0:
+                pos_items_src.append(i)
+                pos_items_tgt.append(self._sample_pos_item_from_domain_for_u(u, domain=1))
+            else:
+                pos_items_tgt.append(i)
+                pos_items_src.append(self._sample_pos_item_from_domain_for_u(u, domain=0))
+
+        return{
+            "users": torch.tensor(users, dtype=torch.long, device=self.device),
+            "pos_items_src": torch.tensor(pos_items_src, dtype=torch.long, device=self.device),
+            "neg_items_src": torch.tensor(neg_items_src, dtype=torch.long, device=self.device),
+            "pos_items_tgt": torch.tensor(pos_items_tgt, dtype=torch.long, device=self.device),
+            "neg_items_tgt": torch.tensor(neg_items_tgt, dtype=torch.long, device=self.device)
+        }
+
+    def _sample_pos_item_from_domain_for_u(self, u, domain):
+        if domain == 0:
+            return random.sample(self.dataset.positive_items_src[u], 1)[0]
+        else:
+            return random.sample(self.dataset.positive_items_tgt[u], 1)[0]
+
     def _sample_neg_item_from_domain_for_u(self, u, domain):
         if domain == 0:
-            pool = range(1, self.dataset.num_items_src + 1)
+            num_items = self.dataset.num_items_src
             hist = self.dataset.positive_items_src[u]
         else:
-            pool = range(1, self.dataset.num_items_tgt + 1)
+            num_items = self.dataset.num_items_tgt
             hist = self.dataset.positive_items_tgt[u]
 
-        neg = random.sample(pool, 1)[0]
+        neg = np.random.randint(1, num_items+1)
         while neg in hist:
-            neg = random.sample(pool, 1)[0]
+            neg = np.random.randint(1, num_items+1)
         return neg
 
     def _sample_interaction_from_domain(self, domain):
         df = self.dataset.df["train_src"] if domain == 0 else self.dataset.df["train_tgt"]
-        row = df.sample(n=1).iloc[0]
+        idx = np.random.randint(len(df))
+        row = df.iloc[idx]
+        # row = df.sample(n=1).iloc[0]
         return row["user"], row["item"]
 
     @property
@@ -225,10 +273,14 @@ class EvalDataLoader(AbstractDataLoader):
         self.cache = {}
         self.state = None
         self.current = None
+        self.warm = False
+        self.cold = False
 
         if config.get("warm_eval", False):
+            self.warm =True
             self.cache["warm"] = self._prepare_one_state("warm_tgt")
         if config.get("cold_start_eval", False):
+            self.cold =True
             self.cache["cold"] = self._prepare_one_state("cold_tgt")
 
     def _prepare_one_state(self, df_key):
@@ -288,7 +340,7 @@ class EvalDataLoader(AbstractDataLoader):
             eval_items.append(items)
             eval_len.append(len(items))
 
-        return eval_items, eval_len
+        return eval_items, np.array(eval_len, dtype=int)
 
     def set_state_for_eval(self, state):
         assert isinstance(state, EvalDataLoaderState)
