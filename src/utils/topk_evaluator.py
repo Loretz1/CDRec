@@ -73,6 +73,7 @@ class TopKEvaluator(object):
         pos_len_list = pos_len_all
         topk_index = torch.cat(batch_matrix_list, dim=0).cpu().numpy()
         # if save recommendation result?
+        # TODO
         if self.save_recom_result and is_test:
             dataset_name = self.config['dataset']
             domains_name = '+'.join(self.config['domains'])

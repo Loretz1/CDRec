@@ -326,6 +326,8 @@ class Trainer(AbstractTrainer):
             dict: eval result, key is the eval metric and value in the corresponding metric value
         """
         self.model.eval()
+        result_warm = None
+        result_cold = None
 
         # batch full users
         batch_matrix_list_warm, batch_matrix_list_cold = None, None

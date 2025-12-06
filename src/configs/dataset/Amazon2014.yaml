@@ -10,6 +10,7 @@ sent_emb_pca: 512
 openai_api_key: sk-5f3SltoIrR7FIPSyqL4EJGvp75TzVYxVpCnpfonSxTYttU0k
 openai_base_url: https://yunwu.ai/v1
 
+# TODO Remove only_overlap_users, Make sure all models use the same dataset.
 # Dataset Partitioning & Evaluation Strategy
 only_overlap_users: False
 k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test

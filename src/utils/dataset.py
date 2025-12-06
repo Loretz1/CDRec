@@ -120,18 +120,14 @@ class RecDataset(object):
         src_only_users = users_src - overlap_users
         tgt_only_users = users_tgt - overlap_users
 
-        if self.config['cold_start_eval']:
-            overlap_list = np.random.permutation(list(overlap_users))
-            num_overlap = len(overlap_list)
-            num_valid_cold = int(num_overlap * self.config['t_cold_valid'])
-            num_test_cold = int(num_overlap * self.config['t_cold_test'])
-            assert num_valid_cold + num_test_cold <= num_overlap, "Sum of t_cold_valid and t_cold_test causes user overflow."
-            valid_cold_users = set(overlap_list[:num_valid_cold])
-            test_cold_users = set(overlap_list[num_valid_cold:num_valid_cold + num_test_cold])
-            overlap_users = set(overlap_list[num_valid_cold + num_test_cold:])
-        else:
-            valid_cold_users = set()
-            test_cold_users = set()
+        overlap_list = np.random.permutation(list(overlap_users))
+        num_overlap = len(overlap_list)
+        num_valid_cold = int(num_overlap * self.config['t_cold_valid'])
+        num_test_cold = int(num_overlap * self.config['t_cold_test'])
+        assert num_valid_cold + num_test_cold <= num_overlap, "Sum of t_cold_valid and t_cold_test causes user overflow."
+        valid_cold_users = set(overlap_list[:num_valid_cold])
+        test_cold_users = set(overlap_list[num_valid_cold:num_valid_cold + num_test_cold])
+        overlap_users = set(overlap_list[num_valid_cold + num_test_cold:])
 
         all_users = {
             'overlap_users': overlap_users,
@@ -188,27 +184,27 @@ class RecDataset(object):
                     test_cold_tgt.append([uid, iid])
             elif raw_uid in user2id_tgt:
                 uid = user2id_tgt[raw_uid]
-                if not self.config['warm_eval']:
-                    for raw_iid in item_seq:
-                        iid = id_mapping['tgt']['item2id'][raw_iid]
-                        train_tgt.append([uid, iid])
-                        if uid not in positive_items_tgt:
-                            positive_items_tgt[uid] = set()
-                        positive_items_tgt[uid].add(iid)
-                else:
-                    seq_len = len(item_seq)
-                    num_test = max(1, int(seq_len * self.config['warm_test_ratio']))
-                    num_valid = max(1, int(seq_len * self.config['warm_valid_ratio']))
-                    num_train = seq_len - num_valid - num_test
-                    for raw_iid in item_seq[:num_train]:
-                        train_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
-                        if uid not in positive_items_tgt:
-                            positive_items_tgt[uid] = set()
-                        positive_items_tgt[uid].add(id_mapping['tgt']['item2id'][raw_iid])
-                    for raw_iid in item_seq[num_train:num_train+num_valid]:
-                        valid_warm_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
-                    for raw_iid in item_seq[num_train+num_valid:]:
-                        test_warm_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
+                # if not self.config['warm_eval']:
+                #     for raw_iid in item_seq:
+                #         iid = id_mapping['tgt']['item2id'][raw_iid]
+                #         train_tgt.append([uid, iid])
+                #         if uid not in positive_items_tgt:
+                #             positive_items_tgt[uid] = set()
+                #         positive_items_tgt[uid].add(iid)
+                # else:
+                seq_len = len(item_seq)
+                num_test = max(1, int(seq_len * self.config['warm_test_ratio']))
+                num_valid = max(1, int(seq_len * self.config['warm_valid_ratio']))
+                num_train = seq_len - num_valid - num_test
+                for raw_iid in item_seq[:num_train]:
+                    train_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
+                    if uid not in positive_items_tgt:
+                        positive_items_tgt[uid] = set()
+                    positive_items_tgt[uid].add(id_mapping['tgt']['item2id'][raw_iid])
+                for raw_iid in item_seq[num_train:num_train+num_valid]:
+                    valid_warm_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
+                for raw_iid in item_seq[num_train+num_valid:]:
+                    test_warm_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
 
         return (self._to_df(train_src), self._to_df(train_tgt), self._to_df(valid_cold_tgt), self._to_df(
             test_cold_tgt), self._to_df(valid_warm_tgt), self._to_df(test_warm_tgt)), (positive_items_src,positive_items_tgt)
@@ -314,20 +310,20 @@ class RecDataset(object):
             f"Items → src: {self.num_items_src}, tgt: {self.num_items_tgt}",
         ]
 
-        if self.config.get('cold_start_eval', False):
-            valid_cold = len(self.all_users.get('valid_cold_users', []))
-            test_cold = len(self.all_users.get('test_cold_users', []))
-            lines.append(f"Cold-start evaluation enabled → Valid-cold: {valid_cold}, Test-cold: {test_cold}")
-        else:
-            lines.append("Cold-start evaluation disabled")
+        # if self.config.get('cold_start_eval', False):
+        valid_cold = len(self.all_users.get('valid_cold_users', []))
+        test_cold = len(self.all_users.get('test_cold_users', []))
+        lines.append(f"Cold-start evaluation enabled → Valid-cold: {valid_cold}, Test-cold: {test_cold}")
+        # else:
+        #     lines.append("Cold-start evaluation disabled")
 
-        if self.config.get('warm_eval', False):
-            lines.append(
-                f"Warm-start split → valid_ratio={self.config.get('warm_valid_ratio', 0)}, "
-                f"test_ratio={self.config.get('warm_test_ratio', 0)}"
-            )
-        else:
-            lines.append("Warm-start evaluation disabled (all warm interactions in train)")
+        # if self.config.get('warm_eval', False):
+        lines.append(
+            f"Warm-start split → valid_ratio={self.config.get('warm_valid_ratio', 0)}, "
+            f"test_ratio={self.config.get('warm_test_ratio', 0)}"
+        )
+        # else:
+        #     lines.append("Warm-start evaluation disabled")
 
         if not len(self.df):
             lines.append("Interaction splits:")

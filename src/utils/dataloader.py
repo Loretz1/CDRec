@@ -289,6 +289,10 @@ class EvalDataLoader(AbstractDataLoader):
             raise KeyError(f"Dataset missing df[{df_key}] for evaluation.")
 
         eval_users = df["user"].unique()
+        if df_key == "warm_tgt" and self.config.get("overlapped_users_for_warm_eval", False):
+            overlap_max = self.dataset.num_users_overlap
+            mask = (eval_users >= 1) & (eval_users <= overlap_max)
+            eval_users = eval_users[mask]
 
         pos_items_per_u, train_pos_len_list = \
             self._build_pos_items_per_u(eval_users, df_key)
