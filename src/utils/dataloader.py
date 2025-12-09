@@ -98,13 +98,29 @@ class TrainDataLoader(AbstractDataLoader):
                     df.values.copy(), columns=df.columns
                 ).reset_index(drop=True)
 
-    def inter_matrix(self, form='coo', value_field=None):
-        pass
+    def get_positive_items_for_u_in_domain(self, user, domain):
+        if domain == 0:
+            return self.dataset.positive_items_src[user]
+        else:
+            return self.dataset.positive_items_tgt[user]
 
-    def _create_sparse_matrix(self, df_feat, source_field, target_field,
-                              form='coo', value_field=None,
-                              user_num=None, item_num=None):
-        pass
+    def inter_matrix(self, domain, form='coo'):
+        all_inter = self.dataset.df['train_src'] if domain == 0 else self.dataset.df['train_tgt']
+        num_users = self.dataset.num_users_src if domain == 0 else self.dataset.num_users_tgt
+        num_items = self.dataset.num_items_src if domain == 0 else self.dataset.num_items_tgt
+
+        # ID start from 1 → shift to 0-based index
+        users = all_inter['user'].values - 1
+        items = all_inter['item'].values - 1
+        data = np.ones_like(users, dtype=np.float32)
+        mat = coo_matrix((data, (users, items)), shape=(num_users, num_items))
+
+        if form == 'coo':
+            return mat
+        elif form == 'csr':
+            return mat.tocsr()
+        else:
+            raise NotImplementedError(f"sparse matrix format [{form}] not implemented.")
 
     def _get_sample_func(self):
         if self.state == TrainDataLoaderState.SOURCE or self.state == TrainDataLoaderState.TARGET:
@@ -113,6 +129,8 @@ class TrainDataLoader(AbstractDataLoader):
             return self._sample_both
         elif self.state == TrainDataLoaderState.OVERLAP:
             return self._sample_overlap
+        elif self.state == TrainDataLoaderState.OVERLAP_USER:
+            return self._sample_overlap_user
         return None
 
     def _sample_single_domain(self):
@@ -226,6 +244,20 @@ class TrainDataLoader(AbstractDataLoader):
             "neg_items_src": torch.tensor(neg_items_src, dtype=torch.long, device=self.device),
             "pos_items_tgt": torch.tensor(pos_items_tgt, dtype=torch.long, device=self.device),
             "neg_items_tgt": torch.tensor(neg_items_tgt, dtype=torch.long, device=self.device)
+        }
+
+    def _sample_overlap_user(self):
+        """
+        Returns:
+        dict: {
+            "users_overlapped": Tensor(batch_size),
+        }
+        """
+        cur_data = self.dataset[self.pr: self.pr + self.batch_size]
+        self.pr += self.batch_size
+
+        return {
+            "users_overlapped": torch.tensor(cur_data["user"].values, dtype=torch.long, device=self.device)
         }
 
     def _sample_pos_item_from_domain_for_u(self, u, domain):

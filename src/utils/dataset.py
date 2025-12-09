@@ -20,12 +20,12 @@ class RecDataset(object):
     BASIC_DATA_FIELDS = [
         "sent_emb_dim", "sent_embeddings",
         "positive_items_src", "positive_items_tgt",
-        "id2user_or_item"
+        "id_mapping"
     ]
 
     # Optional DF Field For train/valid/test, create a dict named "df" for storage of DataFrame
     DATAFRAME_FIELDS = [
-        "train_src", "train_tgt", "train_both", "train_overlap",
+        "train_src", "train_tgt", "train_both", "train_overlap", "train_overlap_user",
         "valid_cold_tgt", "test_cold_tgt",
         "valid_warm_tgt", "test_warm_tgt",
     ]
@@ -60,6 +60,8 @@ class RecDataset(object):
             self.train_both = self._build_train_both_df(self.train_src, self.train_tgt)
         if TrainDataLoaderState.OVERLAP in all_train_stages:
             self.train_overlap = self._build_train_overlap_df(self.train_src, self.train_tgt, len(self.all_users['overlap_users']))
+        if TrainDataLoaderState.OVERLAP_USER in all_train_stages:
+            self.train_overlap_user = pd.DataFrame(range(1, len(self.all_users['overlap_users']) + 1), columns=['user'])
 
         #   - The 5 user groups are mutually exclusive (no overlaps).
         #   - overlap_users: assigned to the same ID range [1 .. len(overlap_users)] in BOTH src and tgt domains.
@@ -76,14 +78,18 @@ class RecDataset(object):
             'src_only_users': {user2id_src[u] for u in self.all_users['src_only_users']},
             'tgt_only_users': {user2id_tgt[u] for u in self.all_users['tgt_only_users']}
         }
-        self.id2user_or_item ={
+        self.id_mapping ={
             "src": {
                 "id2user": id2user_src,
-                "id2item": id_mapping['src']['id2item']
+                "user2id": user2id_src,
+                "id2item": id_mapping['src']['id2item'],
+                "item2id": id_mapping['src']['item2id'],
             },
             "tgt": {
                 "id2user": id2user_tgt,
-                "id2item": id_mapping['tgt']['id2item']
+                "user2id": user2id_tgt,
+                "id2item": id_mapping['tgt']['id2item'],
+                "item2id": id_mapping['tgt']['item2id']
             }
         }
         self.num_users_overlap = len(self.all_users['overlap_users'])
@@ -234,13 +240,13 @@ class RecDataset(object):
 
     def split(self):
         train_dataset = self.copy(
-            keep_fields=["train_both", "train_src", "train_tgt", "train_overlap",
+            keep_fields=["train_both", "train_src", "train_tgt", "train_overlap", "train_overlap_user",
                          "sent_emb_dim", "sent_embeddings",
-                         "positive_items_src", "positive_items_tgt", "id2user_or_item"])
+                         "positive_items_src", "positive_items_tgt", "id_mapping"])
         valid_dataset = self.copy(keep_fields=["valid_cold_tgt", "valid_warm_tgt",
-                                               "positive_items_tgt"])
+                                               "positive_items_tgt", "id_mapping"])
         test_dataset = self.copy(keep_fields=["test_cold_tgt", "test_warm_tgt",
-                                              "positive_items_tgt"])
+                                              "positive_items_tgt", "id_mapping"])
         valid_dataset.df["cold_tgt"] = valid_dataset.df.pop("valid_cold_tgt")
         valid_dataset.df["warm_tgt"] = valid_dataset.df.pop("valid_warm_tgt")
         test_dataset.df["cold_tgt"] = test_dataset.df.pop("test_cold_tgt")
@@ -271,6 +277,8 @@ class RecDataset(object):
             self._active_df = self.df["train_tgt"]
         elif state == TrainDataLoaderState.OVERLAP:
             self._active_df = self.df["train_overlap"]
+        elif state == TrainDataLoaderState.OVERLAP_USER:
+            self._active_df = self.df["train_overlap_user"]
         else:
             raise ValueError(f"Unsupported state: {state}")
 

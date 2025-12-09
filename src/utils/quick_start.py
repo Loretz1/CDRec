@@ -92,7 +92,6 @@ def quick_start(model, dataset, domains, save_model=True):
                 = trainer.fit(i, train_data, valid_data=valid_data, test_data=test_data, saved=save_model)
 
             if not eval:
-                idx += 1
                 continue
 
             hyper_ret.append((hyper_tuple, best_valid_result_warm, best_test_upon_valid_warm, best_valid_result_cold,

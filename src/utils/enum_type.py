@@ -14,13 +14,15 @@ class TrainDataLoaderState(Enum):
     - ``BOTH``: Return both interactions in source domain and target domain.
     - ``SOURCE``: Only return the interactions in source domain.
     - ``TARGET``: Only return the interactions in target domain.
-    - ``OVERLAP``: Return the interactions of overlapped users
+    - ``OVERLAP``: Return the interactions of overlap users
+    - ``OVERLAP_USER``: Return the id of overlap users
     """
 
     BOTH = 1
     SOURCE = 2
     TARGET = 3
     OVERLAP = 4
+    OVERLAP_USER = 5
 
 
 # train_mode2state = {'BOTH': TrainDataLoaderState.BOTH,

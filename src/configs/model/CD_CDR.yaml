@@ -10,20 +10,26 @@ training_stages:
   - name: both_training
     state: BOTH
     epochs: 1000
-    train_batch_size: 81920
+    train_batch_size: 2048
     learner: adam
-    learning_rate: [0.017, 0.015, 0.013]
-    learning_rate_scheduler: [ 1.0, 50 ]
-    weight_decay: 0.0
-#    clip_grad_norm: {"max_norm": 1.0}
+    learning_rate: [0.001, 0.01]
+    learning_rate_scheduler: [1.0, 50]
+    weight_decay: 1e-6
 
-# 3. Fixed Model Parameters Setting
-loss_type: bpr
-dropout: 0.2
-mlp_layers: 3
-feature_dim: 128
-mlp_hidden_dim: 128
+# 3. Fixed Model Parameters
+feature_dim: 64
+dropout: 0.1
+loss_type: l2
+history_len: 50
+layer_norm: 1
+n_heads : 1
+timestep: 100
+beta_sche: linear
+uncon_w: 2
+uncon_p: 0.1
+diffuser_type: mlp1
+stopping_step: 200
 
-# 4. Model Hyperparameter Search Setting
-# hyperparameter search space
-hyper_parameters: ["training_stages.0.learning_rate"]
+# 4. # hyperparameter search space
+hyper_parameters:
+  - training_stages.0.learning_rate

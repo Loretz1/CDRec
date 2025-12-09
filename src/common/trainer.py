@@ -134,6 +134,9 @@ class Trainer(AbstractTrainer):
         total_loss = None
         loss_batches = []
         for batch_idx, interaction in enumerate(train_data):
+            # check the valid of the interaction
+            # self._check_interaction_valid(train_data, interaction)
+
             self.optimizer.zero_grad()
             losses = loss_func(interaction, epoch_idx)
 
@@ -230,6 +233,27 @@ class Trainer(AbstractTrainer):
 
         eval_output += f"{'=' * 90}"
         return eval_output
+
+    def _check_interaction_valid(self, train_data, interaction):
+        from utils.utils import get_dict_from_raw_data_for_Amazon2014
+        import os
+        dataset_path0 = os.path.join(self.config['data_path'], self.config['dataset'])
+        dataset_path1 = os.path.join(self.config['data_path'], self.config['dataset'])
+        domain0 = self.config['domains'][0]
+        domain1 = self.config['domains'][1]
+        review0 = get_dict_from_raw_data_for_Amazon2014(dataset_path0, domain0, True, ['reviewerID', 'asin'],
+                                                        ['reviewerID', 'asin', "reviewText"])
+        review1 = get_dict_from_raw_data_for_Amazon2014(dataset_path1, domain1, True, ['reviewerID', 'asin'],
+                                                        ['reviewerID', 'asin', "reviewText"])
+        for i in range(len(interaction['users_src'])):
+            user_src = train_data.dataset.id_mapping['src']['id2user'][interaction['users_src'][i]]
+            pos_items_src = train_data.dataset.id_mapping['src']['id2item'][interaction['pos_items_src'][i]]
+            neg_items_src = train_data.dataset.id_mapping['src']['id2item'][interaction['neg_items_src'][i]]
+            user_tgt = train_data.dataset.id_mapping['tgt']['id2user'][interaction['users_tgt'][i]]
+            pos_items_tgt = train_data.dataset.id_mapping['tgt']['id2item'][interaction['pos_items_tgt'][i]]
+            neg_items_tgt = train_data.dataset.id_mapping['tgt']['id2item'][interaction['neg_items_tgt'][i]]
+            assert (user_src, pos_items_src) in review0 and (interaction['neg_items_src'][i] not in train_data.dataset.positive_items_src[interaction['users_src'][i].item()])
+            assert (user_tgt, pos_items_tgt) in review1 and (interaction['neg_items_tgt'][i] not in train_data.dataset.positive_items_tgt[interaction['users_tgt'][i].item()])
 
     def fit(self, stage_id, train_data, valid_data=None, test_data=None, saved=False, verbose=True):
         for epoch_idx in range(self.start_epoch, self.epochs):

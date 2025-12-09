@@ -6,8 +6,8 @@ from common.loss import BPRLoss
 
 
 class Base(GeneralRecommender):
-    def __init__(self, config, dataset):
-        super(Base, self).__init__(config, dataset)
+    def __init__(self, config, dataloader):
+        super(Base, self).__init__(config, dataloader)
 
         self.feature_dim = config["feature_dim"]
         self.mlp_hidden_dim = config["mlp_hidden_dim"]
@@ -15,10 +15,10 @@ class Base(GeneralRecommender):
         self.dropout = config["dropout"]
         self.loss_type = config["loss_type"].lower()
 
-        self.source_user_embedding = nn.Embedding(self.num_users_src + 1, self.feature_dim)
-        self.target_user_embedding = nn.Embedding(self.num_users_tgt + 1, self.feature_dim)
-        self.source_item_embedding = nn.Embedding(self.num_items_src + 1, self.feature_dim)
-        self.target_item_embedding = nn.Embedding(self.num_items_tgt + 1, self.feature_dim)
+        self.source_user_embedding = nn.Embedding(self.num_users_src + 1, self.feature_dim, padding_idx=0)
+        self.target_user_embedding = nn.Embedding(self.num_users_tgt + 1, self.feature_dim, padding_idx=0)
+        self.source_item_embedding = nn.Embedding(self.num_items_src + 1, self.feature_dim, padding_idx=0)
+        self.target_item_embedding = nn.Embedding(self.num_items_tgt + 1, self.feature_dim, padding_idx=0)
 
         def make_mlp(in_dim, hidden_dim, layers):
             mlp = []

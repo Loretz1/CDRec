@@ -153,7 +153,7 @@ def set_config_by_path(config, path: str, value):
     else:
         cur[last] = value
 
-def _parse_gz(self, path: str):
+def _parse_gz(path: str):
     with gzip.open(path, 'r') as g:
         for line in g:
             line = line.replace(b'true', b'True').replace(b'false', b'False')
@@ -178,7 +178,6 @@ def get_dict_from_raw_data_for_Amazon2014(dataset_path, domain, is_review, keys,
     dict = {}
     for inter in _parse_gz(file_path):
         key = tuple(inter.get(f, None) for f in keys)
-        for value in values:
-            dict[key] = {value: inter[value] for value in values if value in inter}
+        dict[key] = {value: inter[value] for value in values if value in inter}
 
     return dict

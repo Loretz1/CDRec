@@ -53,7 +53,7 @@ def check_and_prepare_Amazon2014_single(config, domain):
 
 def create_joint_dataset(domains: List[str], config: dict):
     data_path = config['data_path'] if 'data_path' in config else '../data/'
-    joint_dataset_name = "+".join(sorted(domains))
+    joint_dataset_name = "+".join(domains)
     dataset_type = "only_overlap_users" if config['only_overlap_users'] else "all_users"
     joint_path = os.path.join(data_path, 'Amazon2014', joint_dataset_name, dataset_type)
     src_path = os.path.join(data_path, 'Amazon2014', domains[0], 'processed')
@@ -209,7 +209,7 @@ def check_and_prepare_Amazon2014(config):
         return True
 
     data_path = config['data_path'] if 'data_path' in config else '../data/'
-    joint_dataset_name = "+".join(sorted(domains))
+    joint_dataset_name = "+".join(domains)
     dataset_type = "only_overlap_users" if config['only_overlap_users'] else "all_users"
     joint_path = os.path.join(data_path, 'Amazon2014', joint_dataset_name, dataset_type)
 
