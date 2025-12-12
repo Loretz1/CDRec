@@ -6,6 +6,9 @@ from tqdm import tqdm
 from collections import defaultdict
 from typing import Optional, Dict, List, Tuple
 import requests
+from logging import getLogger
+
+logger = getLogger()
 
 class AmazonDataProcessor:
     def __init__(self, config, domain: str, data_path: str = "../data/"):
@@ -14,16 +17,6 @@ class AmazonDataProcessor:
         self.domain_path = os.path.join(data_path, 'Amazon2014', domain)
         self.raw_dir = os.path.join(self.domain_path, 'raw')
         self.processed_dir = os.path.join(self.domain_path, 'processed')
-
-        self.default_config = {
-            'metadata': 'sentence',
-            'sent_emb_model': 'text-embedding-3-large',
-            'sent_emb_dim': 3072,
-            'sent_emb_batch_size': 100,
-            'openai_api_key': None,
-        }
-
-        self.config = self._load_config()
 
         os.makedirs(self.raw_dir, exist_ok=True)
         os.makedirs(self.processed_dir, exist_ok=True)
@@ -35,7 +28,7 @@ class AmazonDataProcessor:
             'id2user': ['[PAD]'],
             'id2item': ['[PAD]']
         }
-        self.item2meta = {}
+        self.item2meta = []
 
     def _check_available_domain(self):
         available_domains = [
@@ -208,54 +201,62 @@ class AmazonDataProcessor:
         return item2meta
 
     def _process_meta(self, input_path: str) -> Optional[Dict]:
-        process_mode = self.config['metadata']
-        meta_file = os.path.join(self.processed_dir, f'metadata.{process_mode}.json')
+        result = []
 
-        if os.path.exists(meta_file):
-            print('[DATASET] Metadata has been processed...')
-            with open(meta_file, 'r') as f:
-                return json.load(f)
+        # judge whether to load metadata or not
+        for id, modality in enumerate(self.config['modalities']):
+            if not modality['enabled']:
+                continue
+            meta_file = os.path.join(self.processed_dir, modality['name'] + '_metadata.json')
+            if not os.path.exists(meta_file):
+                metadata = self._load_metadata(path=input_path, item2id=self.id_mapping['item2id'])
+                break
 
-        print(f'[DATASET] Processing metadata, mode: {process_mode}')
+        for modality in self.config['modalities']:
+            if not modality['enabled']:
+                continue
 
-        if process_mode == 'none':
-            return None
+            meta_file = os.path.join(self.processed_dir, modality['name'] + '_metadata.json')
+            if os.path.exists(meta_file):
+                print(f'[DATASET] Metadata [{modality["name"]}] has been processed...')
+                with open(meta_file, 'r') as f:
+                    result.append(json.load(f))
+                continue
 
-        item2meta = self._load_metadata(path=input_path, item2id=self.id_mapping['item2id'])
+            print(f'[DATASET] Processing metadata, mode: {modality["name"]}')
 
-        if process_mode == 'sentence':
-            item2meta = self._extract_meta_sentences(metadata=item2meta)
+            if modality["name"] == 'sentence':
+                proceeded_metadata = self._extract_meta_sentences(metadata=metadata)
 
-        with open(meta_file, 'w') as f:
-            json.dump(item2meta, f)
+            with open(meta_file, 'w') as f:
+                json.dump(proceeded_metadata, f)
+            result.append(proceeded_metadata)
 
-        return item2meta
+        return result
 
-    def _encode_sent_emb(self, output_path: str) -> np.ndarray:
-        print('[TOKENIZER] Encoding sentence embeddings...')
-
+    def _encode_sent_emb(self, output_path: str, modality, id) -> np.ndarray:
         meta_sentences = []
         for i in range(1, len(self.id_mapping['id2item'])):
             item = self.id_mapping['id2item'][i]
-            meta_sentences.append(self.item2meta[item])
+            meta_sentences.append(self.item2meta[id][item])
 
-        if 'sentence-transformers' in self.config['sent_emb_model']:
+        if 'sentence-transformers' in modality['emb_model']:
             try:
                 from sentence_transformers import SentenceTransformer
                 device = self.config.get('device', 'cpu')
-                sent_emb_model = SentenceTransformer(self.config['sent_emb_model']).to(device)
+                sent_emb_model = SentenceTransformer(modality['emb_model']).to(device)
 
                 sent_embs = sent_emb_model.encode(
                     meta_sentences,
                     convert_to_numpy=True,
-                    batch_size=self.config['sent_emb_batch_size'],
+                    batch_size=modality['emb_batch_size'],
                     show_progress_bar=True,
                     device=device
                 )
             except ImportError:
                 raise ImportError("Please install sentence-transformers: pip install sentence-transformers")
 
-        elif 'text-embedding-3' in self.config['sent_emb_model']:
+        elif 'text-embedding-3' in modality['emb_model']:
             if not self.config['openai_api_key']:
                 raise ValueError("OpenAI API key required for OpenAI embeddings")
 
@@ -269,17 +270,17 @@ class AmazonDataProcessor:
                 client = OpenAI(**client_kwargs)
 
                 sent_embs = []
-                for i in tqdm(range(0, len(meta_sentences), self.config['sent_emb_batch_size']), desc='Encoding'):
-                    batch = meta_sentences[i:i + self.config['sent_emb_batch_size']]
+                for i in tqdm(range(0, len(meta_sentences), modality['emb_batch_size']), desc='Encoding'):
+                    batch = meta_sentences[i:i + modality['emb_batch_size']]
                     try:
                         responses = client.embeddings.create(
                             input=batch,
-                            model=self.config['sent_emb_model']
+                            model=modality['emb_model']
                         )
                         for response in responses.data:
                             sent_embs.append(response.embedding)
                     except Exception as e:
-                        print(f'Encoding failed {i} - {i + self.config["sent_emb_batch_size"]}: {e}')
+                        print(f'Encoding failed {i} - {i + modality["emb_batch_size"]}: {e}')
 
                         try:
                             new_batch = []
@@ -289,13 +290,13 @@ class AmazonDataProcessor:
                                 else:
                                     new_batch.append(sent)
 
-                            print(f'[TOKENIZER] Retrying batch {i} - {i + self.config["sent_emb_batch_size"]}')
+                            print(f'[TOKENIZER] Retrying batch {i} - {i + modality["emb_batch_size"]}')
                             import time
                             time.sleep(2)
 
                             responses = client.embeddings.create(
                                 input=new_batch,
-                                model=self.config['sent_emb_model']
+                                model=modality['emb_model']
                             )
                             for response in responses.data:
                                 sent_embs.append(response.embedding)
@@ -307,30 +308,55 @@ class AmazonDataProcessor:
             except ImportError:
                 raise ImportError("Please install openai: pip install openai")
         else:
-            raise ValueError(f"Unsupported embedding model: {self.config['sent_emb_model']}")
+            raise ValueError(f"Unsupported embedding model: {modality['emb_model']}")
 
         np.save(output_path, sent_embs)
         print(f'[TOKENIZER] Sentence embeddings saved to: {output_path}')
         return sent_embs
 
-    def generate_embeddings(self):
-        if self.config['metadata'] != 'sentence':
-            print('[TOKENIZER] Skipping embedding generation, metadata is not in sentence mode')
-            return
-
-        sent_emb_path = os.path.join(
-            self.processed_dir,
-            f'{os.path.basename(self.config["sent_emb_model"])}_{self.config["sent_emb_dim"]}.npy'
-        )
-
-        if os.path.exists(sent_emb_path):
-            print(f'[TOKENIZER] Loading sentence embeddings: {sent_emb_path}...')
-            sent_embs = np.load(sent_emb_path)
+    def _pca_sent_emb(self, output_path: str, modality, embs) -> np.ndarray:
+        if modality['emb_pca'] == modality['emb_dim']:
+            pca_embs = embs
+        elif modality['emb_pca'] < modality['emb_dim']:
+            try:
+                from sklearn.decomposition import PCA
+                pca = PCA(n_components=modality['emb_pca'], whiten=True)
+                pca_embs = pca.fit_transform(embs)
+            except ImportError:
+                raise ImportError("Please install scikit-learn: pip install scikit-learn")
         else:
-            print('[TOKENIZER] Encoding sentence embeddings...')
-            sent_embs = self._encode_sent_emb(sent_emb_path)
+            raise ValueError(f"The dimension of emb_pca must be less than or equal to emb_dim for {modality['name']}")
 
-        print(f'[TOKENIZER] Sentence embeddings shape: {sent_embs.shape}')
+        np.save(output_path, pca_embs)
+        print(f'[TOKENIZER] PCA sentence embeddings saved to: {output_path}')
+        return pca_embs
+
+    def generate_embeddings(self):
+        for id, modality in enumerate(self.config['modalities']):
+            if not modality['enabled']:
+                continue
+
+            # emb
+            emb_file_path = os.path.join(self.processed_dir, modality['name'] + '_' + modality['emb_model'] + '_' + str(modality['emb_dim']) + '.npy')
+            if os.path.exists(emb_file_path):
+                print(f'[TOKENIZER] Loading {modality["name"]} embeddings: {emb_file_path}...')
+                embs = np.load(emb_file_path)
+            else:
+                print(f'[TOKENIZER] Encoding {modality["name"]} embeddings...')
+                if modality["name"] == 'sentence':
+                    embs = self._encode_sent_emb(emb_file_path, modality, id)
+            print(f'[TOKENIZER] {modality["name"]} embeddings shape: {embs.shape}')
+
+            # pca
+            pca_file_path = os.path.join(self.processed_dir, modality['name'] + '_final_emb_' + str(modality['emb_pca']) + '.npy')
+            if os.path.exists(pca_file_path):
+                print(f'[TOKENIZER] Loading {modality["name"]} pca embeddings: {pca_file_path}...')
+                pca_embs = np.load(pca_file_path)
+            else:
+                print(f'[TOKENIZER] Applying PCA to {modality["name"]} embeddings...')
+                if modality["name"] == 'sentence':
+                    pca_embs = self._pca_sent_emb(pca_file_path, modality, embs)
+            print(f'[TOKENIZER] {modality["name"]} pca embeddings shape: {pca_embs.shape}')
 
     def run_full_pipeline(self):
         print(f"Starting Amazon Reviews 2014 dataset processing - Domain: {self.domain}")
@@ -364,11 +390,4 @@ class AmazonDataProcessor:
             subindent = ' ' * 2 * (level + 1)
             for file in files:
                 print(f"{subindent}{file}")
-
-    def _load_config(self):
-        final_config = self.config.final_config_dict.copy()
-        for key, value in self.default_config.items():
-            if key not in final_config:
-                final_config[key] = value
-        return final_config
 

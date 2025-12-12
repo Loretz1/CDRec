@@ -3,7 +3,7 @@ import os
 import json
 import pandas as pd
 import numpy as np
-from utils.enum_type import TrainDataLoaderState, EvalDataLoaderState
+from utils.enum_type import TrainDataLoaderState
 import random
 
 
@@ -18,7 +18,7 @@ class RecDataset(object):
 
     # Optional Basic Field For train/valid/test
     BASIC_DATA_FIELDS = [
-        "sent_emb_dim", "sent_embeddings",
+        "sent_emb_dim", "modality_embeddings",
         "positive_items_src", "positive_items_tgt",
         "id_mapping"
     ]
@@ -37,17 +37,13 @@ class RecDataset(object):
         if skip:
             return
 
-        dataset_path = os.path.join(self.config['data_path'], config['dataset'], '+'.join(config['domains']),
-                                    'only_overlap_users' if config['only_overlap_users'] else 'all_users')
+        dataset_path = os.path.join(self.config['data_path'], config['dataset'], '+'.join(config['domains']))
 
         self.sent_emb_dim = self.config['sent_emb_pca'] if 'sent_emb_pca' in self.config else self.config[
             'sent_emb_dim']
-        all_item_seqs, id_mapping, sent_embeddings = self._load_data(dataset_path)
-        pad_embedding = np.zeros((1, self.sent_emb_dim), dtype=np.float32)
-        self.sent_embeddings = {
-            domain: np.concatenate([pad_embedding, sent_embeddings[domain]], axis=0)
-            for domain in ['src', 'tgt']
-        }
+        all_item_seqs, id_mapping, modality_embeddings = self._load_data(dataset_path)
+
+        self.modality_embeddings = self._add_padding_for_modality_embeddings(modality_embeddings)
 
         self.all_users, user2id_src, user2id_tgt, id2user_src, id2user_tgt = self._split_users(all_item_seqs)
 
@@ -104,7 +100,7 @@ class RecDataset(object):
         # Load Data
         all_item_seqs = {}
         id_mapping = {}
-        sent_embeddings ={}
+        modality_embeddings = {'src':{}, 'tgt':{}}
         for domain in ['src', 'tgt']:
             path = os.path.join(dataset_path, domain)
             with open(os.path.join(path, 'all_item_seqs.json'), 'r') as f:
@@ -114,9 +110,23 @@ class RecDataset(object):
                         random.shuffle(items)
             with open(os.path.join(path, 'id_mapping.json'), 'r') as f:
                 id_mapping[domain] = json.load(f)
-            sent_embeddings[domain] = np.load(os.path.join(path, f'final_sent_embeddings_{self.sent_emb_dim}.npy'))
+            for modality in self.config['modalities']:
+                if not modality['enabled']:
+                    continue
+                emb = np.load(os.path.join(path, modality['name'] + '_final_emb_' + str(modality['emb_pca']) + '.npy'))
+                modality_embeddings[domain][modality['name']] = emb
 
-        return all_item_seqs, id_mapping, sent_embeddings
+        return all_item_seqs, id_mapping, modality_embeddings
+
+    def _add_padding_for_modality_embeddings(self, modality_embeddings):
+        for domain in ['src', 'tgt']:
+            for modality_name, emb in modality_embeddings[domain].items():
+                emb_dim = emb.shape[1]
+                pad_embedding = np.zeros((1, emb_dim), dtype=emb.dtype)
+                modality_embeddings[domain][modality_name] = np.concatenate(
+                    [pad_embedding, emb], axis=0
+                )
+        return modality_embeddings
 
     def _split_users(self, all_item_seqs):
         # Split User Set
@@ -241,7 +251,7 @@ class RecDataset(object):
     def split(self):
         train_dataset = self.copy(
             keep_fields=["train_both", "train_src", "train_tgt", "train_overlap", "train_overlap_user",
-                         "sent_emb_dim", "sent_embeddings",
+                         "sent_emb_dim", "modality_embeddings",
                          "positive_items_src", "positive_items_tgt", "id_mapping"])
         valid_dataset = self.copy(keep_fields=["valid_cold_tgt", "valid_warm_tgt",
                                                "positive_items_tgt", "id_mapping"])

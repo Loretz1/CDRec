@@ -5,6 +5,7 @@ seed: [999]
 
 save_recommended_topk: True
 recommend_topk: 'recommend_topk/'
+log_model_suffix: ~
 
 embedding_size: 64
 req_training: True

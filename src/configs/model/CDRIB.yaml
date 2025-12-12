@@ -1,6 +1,6 @@
 # 1. Eval Setting
-warm_eval: False  # Whether to enable warm user evaluation
-overlapped_users_for_warm_eval: False # Warm evaluation is performed only after filtering users that exist in both domains (overlapped users).
+warm_eval: True  # Whether to enable warm user evaluation
+overlapped_users_for_warm_eval: True # Warm evaluation is performed only after filtering users that exist in both domains (overlapped users).
 cold_start_eval: True # Whether to enable cold start user evaluation
 
 # 2. Multi-stage Training Setting
@@ -10,24 +10,30 @@ training_stages:
   - name: both_training
     state: BOTH
     epochs: 1000
-    train_batch_size: 32768
+    train_batch_size: 2048
     learner: adam
-    learning_rate: [0.001, 0.01, 0.015]
-    learning_rate_scheduler: [0.9, 10]
-    weight_decay: 5e-4
+    learning_rate: [0.0001, 0.0005, 0.001]  # 0.01 ×too large
+    learning_rate_scheduler: [0.95, 10]
+    weight_decay: [0.001, 0.0001]
 #    clip_grad_norm: {"max_norm": 1.0}
 
 # 3. Fixed Model Parameters Setting
 feature_dim: 128
 hidden_dim: 128
 GNN: 3
-dropout: 0.3
+dropout: [0.2, 0.3]
 leakey: 0.1
 user_batch_size: 64
 bce: False
 margin: 0.3
-beta: 1.5
+beta: [0.5, 1.0, 1.5]
+#log_model_suffix: without_contrastive
+#stopping_step: 100
 
 # 4. Model Hyperparameter Search Setting
 # hyperparameter search space
-hyper_parameters: ["training_stages.0.learning_rate"]
+hyper_parameters:
+  - "training_stages.0.learning_rate"
+  - "dropout"
+  - "beta"
+  - "training_stages.0.weight_decay"

@@ -1,24 +1,20 @@
 # Raw data processing
 data_path: '../data/'
 
-metadata: "sentence"
-sent_emb_model: "text-embedding-3-large"
-sent_emb_batch_size: 1024
-sent_emb_dim: 3072
-sent_emb_pca: 512
 
 openai_api_key: sk-5f3SltoIrR7FIPSyqL4EJGvp75TzVYxVpCnpfonSxTYttU0k
 openai_base_url: https://yunwu.ai/v1
+modalities:
+  - name: "sentence"
+    emb_model: "text-embedding-3-large"
+    emb_batch_size: 1024
+    emb_dim: 3072
+    emb_pca: 512
+    enabled: true
 
-# TODO Remove only_overlap_users, Make sure all models use the same dataset.
-# Dataset Partitioning & Evaluation Strategy
-only_overlap_users: False
-k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
 
 shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
-
 warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
 warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
-
 t_cold_valid: 0.1 # cold user in the target domain valid set
 t_cold_test: 0.1 # cold user in the target domain test set

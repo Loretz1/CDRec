@@ -10,7 +10,10 @@ def init_logger(config):
         os.makedirs(dir_name)
 
     domains_str = '+'.join(config['domains'])
-    logfilename = '{}-{}-{}-{}.log'.format(config['model'], config['dataset'], domains_str, get_local_time())
+    model_name = config['model']
+    if 'log_model_suffix' in config and config['log_model_suffix']:
+        model_name = f"{model_name}_{config['log_model_suffix']}"
+    logfilename = '{}-{}-{}-{}.log'.format(model_name, config['dataset'], domains_str, get_local_time())
 
     logfilepath = os.path.join(LOGROOT, logfilename)
 

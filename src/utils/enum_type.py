@@ -1,12 +1,4 @@
-# -*- coding: utf-8 -*-
-
-"""
-DiffICDR.utils.enum_type
-#######################
-"""
-
 from enum import Enum
-
 
 class TrainDataLoaderState(Enum):
     """States for TrainDataLoader.
@@ -23,12 +15,6 @@ class TrainDataLoaderState(Enum):
     TARGET = 3
     OVERLAP = 4
     OVERLAP_USER = 5
-
-
-# train_mode2state = {'BOTH': TrainDataLoaderState.BOTH,
-#                     'SOURCE': TrainDataLoaderState.SOURCE,
-#                     'TARGET': TrainDataLoaderState.TARGET,
-#                     'OVERLAP': TrainDataLoaderState.OVERLAP}
 
 class EvalDataLoaderState(Enum):
     """States for EvalDataLoader."""

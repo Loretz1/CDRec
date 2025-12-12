@@ -9,16 +9,16 @@ cold_start_eval: True # Whether to enable cold start user evaluation
 training_stages:
   - name: source_training
     state: SOURCE
-    epochs: [60]
-    train_batch_size: 81920
+    epochs: [20,40,60,80]
+    train_batch_size: 2048
     learner: adam
     learning_rate: 0.01
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
   - name: target_training
     state: TARGET
-    epochs: [60]
-    train_batch_size: 81920
+    epochs: [20,40,60,80]
+    train_batch_size: 2048
     learner: adam
     learning_rate: 0.01
     learning_rate_scheduler: [ 1.0, 50 ]
@@ -26,19 +26,23 @@ training_stages:
   - name: mapping_training
     state: OVERLAP_USER
     epochs: 1000
-    train_batch_size: 81920
+    train_batch_size: 2048
     learner: adam
-    learning_rate: 0.005
+    learning_rate: [0.001, 0.005, 0.01]
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
 
 # 3. Fixed Model Parameters Setting
 feature_dim: 64
 mlp_hidden_dim: 128
-mlp_layers: 2
+mlp_layers: [2,3,4]
 dropout: 0.2
 loss_type: bpr
 # 4. Model Hyperparameter Search Setting
 
 # hyperparameter search space
-hyper_parameters: [ training_stages.0.epochs, training_stages.1.epochs]
+hyper_parameters:
+  - training_stages.0.epochs
+  - training_stages.1.epochs
+  - training_stages.2.learning_rate
+  - mlp_layers

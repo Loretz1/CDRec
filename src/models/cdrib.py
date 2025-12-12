@@ -148,6 +148,13 @@ class CDRIB(GeneralRecommender):
                self.source_GNN.encoder[-1].kld_loss + self.target_GNN.encoder[-1].kld_loss
                 + self.critic_loss)
 
+        # without_contrastive variant
+        # loss = (self.criterion(pos_source_score, source_pos_labels)
+        #         + self.criterion(neg_source_score, source_neg_labels)
+        #         + self.criterion(pos_target_score, target_pos_labels)
+        #         + self.criterion(neg_target_score, target_neg_labels) + \
+        #        self.source_GNN.encoder[-1].kld_loss + self.target_GNN.encoder[-1].kld_loss)
+
         return loss
 
     def full_sort_predict(self, interaction, is_warm):
@@ -159,12 +166,17 @@ class CDRIB(GeneralRecommender):
         source_learn_user, source_learn_item = self.source_GNN(source_user, source_item, self.source_UV, self.source_VU)  # no padding of index = 0
         target_learn_user, target_learn_item = self.target_GNN(target_user, target_item, self.target_UV, self.target_VU)  # no padding of index = 0
         if not is_warm:
-            user_emb = source_learn_user(user)
+            user_emb = source_learn_user[user]
             all_tgt_items_emb = torch.cat(
                 [torch.zeros(1, target_learn_item.size(1), device=self.device), target_learn_item], dim=0)
             scores_tgt = torch.matmul(user_emb, all_tgt_items_emb.T)  # [B, n_target_items + 1]
             return scores_tgt
-        return None
+        else:
+            user_emb = target_learn_user[user]
+            all_tgt_items_emb = torch.cat(
+                [torch.zeros(1, target_learn_item.size(1), device=self.device), target_learn_item], dim=0)
+            scores_tgt = torch.matmul(user_emb, all_tgt_items_emb.T)  # [B, n_target_items + 1]
+            return scores_tgt
 
     def set_train_stage(self, stage_id):
         super(CDRIB, self).set_train_stage(stage_id)
