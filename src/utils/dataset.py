@@ -18,7 +18,7 @@ class RecDataset(object):
 
     # Optional Basic Field For train/valid/test
     BASIC_DATA_FIELDS = [
-        "sent_emb_dim", "modality_embeddings",
+        "modality_embeddings",
         "positive_items_src", "positive_items_tgt",
         "id_mapping"
     ]
@@ -37,19 +37,21 @@ class RecDataset(object):
         if skip:
             return
 
-        dataset_path = os.path.join(self.config['data_path'], config['dataset'], '+'.join(config['domains']))
+        dataset_path = os.path.join(self.config['data_path'], config['dataset'],
+                                    '+'.join(config['domains']),
+                                    "only_overlap_users" if config['only_overlap_users'] else "all_users", (
+                                        f"WarmValid{config['warm_valid_ratio']}_"
+                                        f"WarmTest{config['warm_test_ratio']}_"
+                                        f"ColdValid{config['t_cold_valid']}_"
+                                        f"ColdTest{config['t_cold_test']}"
+                                    ))
 
-        self.sent_emb_dim = self.config['sent_emb_pca'] if 'sent_emb_pca' in self.config else self.config[
-            'sent_emb_dim']
-        all_item_seqs, id_mapping, modality_embeddings = self._load_data(dataset_path)
+        self.all_users, self.id_mapping, self.train_src, self.train_tgt, self.valid_cold_tgt, self.test_cold_tgt, self.valid_warm_tgt, self.test_warm_tgt, self.modality_embeddings = self._load_data(
+            dataset_path)
 
-        self.modality_embeddings = self._add_padding_for_modality_embeddings(modality_embeddings)
+        self.modality_embeddings = self._add_padding_for_modality_embeddings(self.modality_embeddings)
 
-        self.all_users, user2id_src, user2id_tgt, id2user_src, id2user_tgt = self._split_users(all_item_seqs)
-
-        (self.train_src, self.train_tgt, self.valid_cold_tgt, self.test_cold_tgt, self.valid_warm_tgt,
-         self.test_warm_tgt), (self.positive_items_src, self.positive_items_tgt) = self._split_interation(
-            all_item_seqs, id_mapping, user2id_src, user2id_tgt)
+        self.positive_items_src, self.positive_items_tgt = self._get_positive_items_set(self.train_src, self.train_tgt)
 
         all_train_stages = [TrainDataLoaderState[i['state']] for i in self.config['training_stages']]
         if TrainDataLoaderState.BOTH in all_train_stages:
@@ -59,64 +61,44 @@ class RecDataset(object):
         if TrainDataLoaderState.OVERLAP_USER in all_train_stages:
             self.train_overlap_user = pd.DataFrame(range(1, len(self.all_users['overlap_users']) + 1), columns=['user'])
 
-        #   - The 5 user groups are mutually exclusive (no overlaps).
-        #   - overlap_users: assigned to the same ID range [1 .. len(overlap_users)] in BOTH src and tgt domains.
-        #                    → These are warm users shared across domains.
-        #   - src_only_users + valid_cold_users + test_cold_users:
-        #                    → These are single-domain users of source domain (only src has interactions).
-        #                    → Reindexed starting from len(overlap_users) + 1 in source domain.
-        #   - tgt_only_users: single-domain users of target domain (only tgt has interactions),
-        #                    → Reindexed starting from len(overlap_users) + 1 in target domain.
-        self.all_users = {
-            'overlap_users': {user2id_src[u] for u in self.all_users['overlap_users']},
-            'valid_cold_users': {user2id_src[u] for u in self.all_users['valid_cold_users']},
-            'test_cold_users': {user2id_src[u] for u in self.all_users['test_cold_users']},
-            'src_only_users': {user2id_src[u] for u in self.all_users['src_only_users']},
-            'tgt_only_users': {user2id_tgt[u] for u in self.all_users['tgt_only_users']}
-        }
-        self.id_mapping ={
-            "src": {
-                "id2user": id2user_src,
-                "user2id": user2id_src,
-                "id2item": id_mapping['src']['id2item'],
-                "item2id": id_mapping['src']['item2id'],
-            },
-            "tgt": {
-                "id2user": id2user_tgt,
-                "user2id": user2id_tgt,
-                "id2item": id_mapping['tgt']['id2item'],
-                "item2id": id_mapping['tgt']['item2id']
-            }
-        }
         self.num_users_overlap = len(self.all_users['overlap_users'])
         self.num_users_src = len(self.all_users['overlap_users']) + len(self.all_users['valid_cold_users']) + len(self.all_users['test_cold_users']) + len(self.all_users['src_only_users'])
         self.num_users_tgt = len(self.all_users['overlap_users']) + len(self.all_users['tgt_only_users'])
-        self.num_items_src = len(id_mapping['src']['item2id'])
-        self.num_items_tgt = len(id_mapping['tgt']['item2id'])
+        self.num_items_src = len(self.id_mapping['src']['item2id'])
+        self.num_items_tgt = len(self.id_mapping['tgt']['item2id'])
 
     def _load_data(self, dataset_path):
         self.logger.info('[TRAINING] Loading dataset from {}'.format(dataset_path))
 
-        # Load Data
-        all_item_seqs = {}
-        id_mapping = {}
-        modality_embeddings = {'src':{}, 'tgt':{}}
-        for domain in ['src', 'tgt']:
-            path = os.path.join(dataset_path, domain)
-            with open(os.path.join(path, 'all_item_seqs.json'), 'r') as f:
-                all_item_seqs[domain] = json.load(f)
-                if self.config.get("shuffle_user_sequence", True):
-                    for uid, items in all_item_seqs[domain].items():
-                        random.shuffle(items)
-            with open(os.path.join(path, 'id_mapping.json'), 'r') as f:
-                id_mapping[domain] = json.load(f)
-            for modality in self.config['modalities']:
-                if not modality['enabled']:
-                    continue
-                emb = np.load(os.path.join(path, modality['name'] + '_final_emb_' + str(modality['emb_pca']) + '.npy'))
-                modality_embeddings[domain][modality['name']] = emb
+        all_users_path = os.path.join(dataset_path, 'all_users.json')
+        id_mapping_path = os.path.join(dataset_path, 'id_mapping.json')
+        with open(all_users_path, 'r') as f:
+            all_users = json.load(f)
+        with open(id_mapping_path, 'r') as f:
+            id_mapping = json.load(f)
 
-        return all_item_seqs, id_mapping, modality_embeddings
+        train_src = pd.read_pickle(os.path.join(dataset_path, 'train_src.pkl'))
+        train_tgt = pd.read_pickle(os.path.join(dataset_path, 'train_tgt.pkl'))
+        valid_cold_tgt = pd.read_pickle(os.path.join(dataset_path, 'valid_cold_tgt.pkl'))
+        test_cold_tgt = pd.read_pickle(os.path.join(dataset_path, 'test_cold_tgt.pkl'))
+        valid_warm_tgt = pd.read_pickle(os.path.join(dataset_path, 'valid_warm_tgt.pkl'))
+        test_warm_tgt = pd.read_pickle(os.path.join(dataset_path, 'test_warm_tgt.pkl'))
+
+        modality_embeddings = {"src": {},"tgt": {}}
+        for modality in self.config['modalities']:
+            if not modality.get('enabled', False):
+                continue
+            emb_name = modality['name'] + '_final_emb_'+ str(modality['emb_pca'])+ '.npy'
+            src_emb_path = os.path.join(dataset_path, 'modality_emb_src', emb_name)
+            tgt_emb_path = os.path.join(dataset_path, 'modality_emb_tgt', emb_name)
+
+            modality_embeddings["src"][modality['name']] = np.load(src_emb_path)
+            modality_embeddings["tgt"][modality['name']] = np.load(tgt_emb_path)
+
+        self.logger.info('[TRAINING] Dataset loading finished.')
+
+        return (all_users, id_mapping, train_src, train_tgt, valid_cold_tgt, test_cold_tgt, valid_warm_tgt,
+                test_warm_tgt, modality_embeddings)
 
     def _add_padding_for_modality_embeddings(self, modality_embeddings):
         for domain in ['src', 'tgt']:
@@ -128,105 +110,18 @@ class RecDataset(object):
                 )
         return modality_embeddings
 
-    def _split_users(self, all_item_seqs):
-        # Split User Set
-        users_src = set(all_item_seqs['src'].keys())
-        users_tgt = set(all_item_seqs['tgt'].keys())
-        overlap_users = users_src & users_tgt
-        src_only_users = users_src - overlap_users
-        tgt_only_users = users_tgt - overlap_users
-
-        overlap_list = np.random.permutation(list(overlap_users))
-        num_overlap = len(overlap_list)
-        num_valid_cold = int(num_overlap * self.config['t_cold_valid'])
-        num_test_cold = int(num_overlap * self.config['t_cold_test'])
-        assert num_valid_cold + num_test_cold <= num_overlap, "Sum of t_cold_valid and t_cold_test causes user overflow."
-        valid_cold_users = set(overlap_list[:num_valid_cold])
-        test_cold_users = set(overlap_list[num_valid_cold:num_valid_cold + num_test_cold])
-        overlap_users = set(overlap_list[num_valid_cold + num_test_cold:])
-
-        all_users = {
-            'overlap_users': overlap_users,
-            'valid_cold_users': valid_cold_users,
-            'test_cold_users': test_cold_users,
-            'src_only_users': src_only_users,
-            'tgt_only_users': tgt_only_users
-        }
-
-        # Reindex User ID for Each Domain
-        # Overlapped User: 1 -> num(overlap_users)
-        # Single Domain User: num(overlap_users) + 1 -> num(domain_user)
-        user2id_src, user2id_tgt = {}, {}
-        id2user_src, id2user_tgt = ["PAD"], ["PAD"]
-        for i, u in enumerate(all_users['overlap_users'], start=1):
-            user2id_src[u] = i
-            id2user_src.append(u)
-            user2id_tgt[u] = i
-            id2user_tgt.append(u)
-        for i, u in enumerate(all_users['valid_cold_users'] | all_users['test_cold_users'] | all_users[
-            'src_only_users'], start=len(all_users['overlap_users']) + 1):
-            user2id_src[u] = i
-            id2user_src.append(u)
-        for i, u in enumerate(all_users['tgt_only_users'], start=len(all_users['overlap_users']) + 1):
-            user2id_tgt[u] = i
-            id2user_tgt.append(u)
-        return all_users, user2id_src, user2id_tgt, id2user_src, id2user_tgt
-
-    def _split_interation(self, all_item_seqs, id_mapping, user2id_src, user2id_tgt):
-        train_src, train_tgt = [], []
-        valid_cold_tgt, test_cold_tgt = [], []
-        valid_warm_tgt, test_warm_tgt = [], []
-        positive_items_src, positive_items_tgt = {}, {}
-
-        for raw_uid, item_seq in all_item_seqs['src'].items():
-            uid = user2id_src[raw_uid]
-            for raw_iid in item_seq:
-                iid = id_mapping['src']['item2id'][raw_iid]
-                train_src.append([uid, iid])
-                if uid not in positive_items_src:
-                    positive_items_src[uid] = set()
-                positive_items_src[uid].add(iid)
-
-        for raw_uid, item_seq in all_item_seqs['tgt'].items():
-            if raw_uid in self.all_users["valid_cold_users"]:
-                uid = user2id_src[raw_uid]
-                for raw_iid in item_seq:
-                    iid = id_mapping['tgt']['item2id'][raw_iid]
-                    valid_cold_tgt.append([uid, iid])
-            elif raw_uid in self.all_users["test_cold_users"]:
-                uid = user2id_src[raw_uid]  # cold users only have src IDs
-                for raw_iid in item_seq:
-                    iid = id_mapping['tgt']['item2id'][raw_iid]
-                    test_cold_tgt.append([uid, iid])
-            elif raw_uid in user2id_tgt:
-                uid = user2id_tgt[raw_uid]
-                # if not self.config['warm_eval']:
-                #     for raw_iid in item_seq:
-                #         iid = id_mapping['tgt']['item2id'][raw_iid]
-                #         train_tgt.append([uid, iid])
-                #         if uid not in positive_items_tgt:
-                #             positive_items_tgt[uid] = set()
-                #         positive_items_tgt[uid].add(iid)
-                # else:
-                seq_len = len(item_seq)
-                num_test = max(1, int(seq_len * self.config['warm_test_ratio']))
-                num_valid = max(1, int(seq_len * self.config['warm_valid_ratio']))
-                num_train = seq_len - num_valid - num_test
-                for raw_iid in item_seq[:num_train]:
-                    train_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
-                    if uid not in positive_items_tgt:
-                        positive_items_tgt[uid] = set()
-                    positive_items_tgt[uid].add(id_mapping['tgt']['item2id'][raw_iid])
-                for raw_iid in item_seq[num_train:num_train+num_valid]:
-                    valid_warm_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
-                for raw_iid in item_seq[num_train+num_valid:]:
-                    test_warm_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
-
-        return (self._to_df(train_src), self._to_df(train_tgt), self._to_df(valid_cold_tgt), self._to_df(
-            test_cold_tgt), self._to_df(valid_warm_tgt), self._to_df(test_warm_tgt)), (positive_items_src,positive_items_tgt)
-
-    def _to_df(self, inter):
-        return pd.DataFrame(inter, columns=['user', 'item'])
+    def _get_positive_items_set(self, train_src, train_tgt):
+        positive_items_src = {}
+        positive_items_tgt = {}
+        for user, item in train_src.values:
+           if user not in positive_items_src:
+               positive_items_src[user] = set()
+           positive_items_src[user].add(item)
+        for user, item in train_tgt.values:
+           if user not in positive_items_tgt:
+               positive_items_tgt[user] = set()
+           positive_items_tgt[user].add(item)
+        return positive_items_src, positive_items_tgt
 
     def _build_train_both_df(self, df_src, df_tgt):
         src_df = df_src.copy()
@@ -251,7 +146,7 @@ class RecDataset(object):
     def split(self):
         train_dataset = self.copy(
             keep_fields=["train_both", "train_src", "train_tgt", "train_overlap", "train_overlap_user",
-                         "sent_emb_dim", "modality_embeddings",
+                         "modality_embeddings",
                          "positive_items_src", "positive_items_tgt", "id_mapping"])
         valid_dataset = self.copy(keep_fields=["valid_cold_tgt", "valid_warm_tgt",
                                                "positive_items_tgt", "id_mapping"])
@@ -294,9 +189,6 @@ class RecDataset(object):
 
         self._active_df.reset_index(drop=True, inplace=True)
         return self
-
-    def get_active_df(self):
-        return self._active_df
 
     def shuffle(self):
         if hasattr(self, "_active_df") and isinstance(self._active_df, pd.DataFrame):
@@ -348,9 +240,6 @@ class RecDataset(object):
             for name in ["train_src", "train_tgt", "valid_cold_tgt", "valid_warm_tgt", "test_cold_tgt", "test_warm_tgt"]:
                 if hasattr(self, name):
                     lines.append(f"  └─ {name}: {len(getattr(self, name))}")
-
-        if hasattr(self, 'sent_emb_dim'):
-            lines.append(f"Embedding dimension: {self.sent_emb_dim}")
 
         src_interactions = len(self.train_src) if hasattr(self, "train_src") else len(self.df["train_src"]) if "train_src" in self.df else 0
         tgt_interactions = 0

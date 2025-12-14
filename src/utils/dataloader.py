@@ -212,7 +212,7 @@ class TrainDataLoader(AbstractDataLoader):
         """
         Returns:
         dict: {
-            "users_src": Tensor(batch_size),
+            "users": Tensor(batch_size),
             "pos_items_src": Tensor(batch_size),
             "neg_items_src": Tensor(batch_size)
             "pos_items_tgt": Tensor(batch_size),

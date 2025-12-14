@@ -166,12 +166,16 @@ class CDRIB(GeneralRecommender):
         source_learn_user, source_learn_item = self.source_GNN(source_user, source_item, self.source_UV, self.source_VU)  # no padding of index = 0
         target_learn_user, target_learn_item = self.target_GNN(target_user, target_item, self.target_UV, self.target_VU)  # no padding of index = 0
         if not is_warm:
+            zero_pad = torch.zeros(1, source_learn_user.size(1), device=self.device)
+            source_learn_user = torch.cat([zero_pad, source_learn_user], dim=0)
             user_emb = source_learn_user[user]
             all_tgt_items_emb = torch.cat(
                 [torch.zeros(1, target_learn_item.size(1), device=self.device), target_learn_item], dim=0)
             scores_tgt = torch.matmul(user_emb, all_tgt_items_emb.T)  # [B, n_target_items + 1]
             return scores_tgt
         else:
+            zero_pad = torch.zeros(1, target_learn_user.size(1), device=self.device)
+            target_learn_user = torch.cat([zero_pad, target_learn_user], dim=0)
             user_emb = target_learn_user[user]
             all_tgt_items_emb = torch.cat(
                 [torch.zeros(1, target_learn_item.size(1), device=self.device), target_learn_item], dim=0)
