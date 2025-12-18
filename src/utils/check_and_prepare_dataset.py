@@ -309,6 +309,8 @@ def create_joint_dataset(domains: List[str], config: dict):
         f"ColdValid{config['t_cold_valid']}_"
         f"ColdTest{config['t_cold_test']}"
     )
+    if config['only_overlap_users']:
+        split_dir += f'_{config["k_cores"]}cores'
     joint_path = os.path.join(data_path, 'Amazon2014', joint_dataset_name, dataset_type, split_dir)
 
     os.makedirs(os.path.join(joint_path, 'modality_emb_src'), exist_ok=True)
@@ -377,6 +379,8 @@ def check_and_prepare_Amazon2014(config):
         f"ColdValid{config['t_cold_valid']}_"
         f"ColdTest{config['t_cold_test']}"
     )
+    if config['only_overlap_users']:
+        split_dir += f'_{config["k_cores"]}cores'
     joint_path = os.path.join(data_path, 'Amazon2014', joint_dataset_name, dataset_type, split_dir)
 
     required_joint_files = [

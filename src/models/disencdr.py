@@ -16,6 +16,8 @@ class DisenCDR(GeneralRecommender):
         self.feature_dim = opt['feature_dim']
         self.rate = {}
         for u in dataloader.dataset.positive_items_src:
+            if u > self.num_users_overlap:
+                continue
             src_cnt = len(dataloader.dataset.positive_items_src.get(u, set()))
             tgt_cnt = len(dataloader.dataset.positive_items_tgt.get(u, set()))
             self.rate[u] = src_cnt / (src_cnt + tgt_cnt)
@@ -32,18 +34,20 @@ class DisenCDR(GeneralRecommender):
 
         self.dropout = opt["dropout"]
 
-        self.source_user_embedding = nn.Embedding(self.num_users_src + 1, self.feature_dim, padding_idx=0)
-        self.target_user_embedding = nn.Embedding(self.num_users_tgt + 1, self.feature_dim, padding_idx=0)
+        self.source_user_embedding = nn.Embedding(self.num_users_overlap + 1, self.feature_dim, padding_idx=0)
+        self.target_user_embedding = nn.Embedding(self.num_users_overlap + 1, self.feature_dim, padding_idx=0)
         self.source_item_embedding = nn.Embedding(self.num_items_src + 1, self.feature_dim, padding_idx=0)
         self.target_item_embedding = nn.Embedding(self.num_items_tgt + 1, self.feature_dim, padding_idx=0)
-        self.source_user_embedding_share = nn.Embedding(self.num_users_src + 1, self.feature_dim, padding_idx=0)
-        self.target_user_embedding_share = nn.Embedding(self.num_users_tgt + 1, self.feature_dim, padding_idx=0)
+        self.source_user_embedding_share = nn.Embedding(self.num_users_overlap + 1, self.feature_dim, padding_idx=0)
+        self.target_user_embedding_share = nn.Embedding(self.num_users_overlap + 1, self.feature_dim, padding_idx=0)
 
         self.share_mean = nn.Linear(opt["feature_dim"] + opt["feature_dim"], opt["feature_dim"])
         self.share_sigma = nn.Linear(opt["feature_dim"] + opt["feature_dim"], opt["feature_dim"])
 
         src_mat = dataloader.inter_matrix(domain=0, form='coo')
         tgt_mat = dataloader.inter_matrix(domain=1, form='coo')
+        src_mat = self.filter_overlap_users(src_mat, self.num_users_overlap)
+        tgt_mat = self.filter_overlap_users(tgt_mat, self.num_users_overlap)
         src_mat = self.normalize(src_mat)
         tgt_mat = self.normalize(tgt_mat)
         self.source_UV = self._scipy_coo_to_torch(src_mat).coalesce()
@@ -60,6 +64,20 @@ class DisenCDR(GeneralRecommender):
         )  # [2, nnz]
         values = torch.tensor(mat.data, dtype=torch.float32, device=self.device)
         return torch.sparse_coo_tensor(indices, values, mat.shape, device=self.device).coalesce()
+
+    def filter_overlap_users(self, mat: sp.coo_matrix, num_overlap_user: int):
+        mask = mat.row < num_overlap_user
+
+        new_row = mat.row[mask]
+        new_col = mat.col[mask]
+        new_data = mat.data[mask]
+
+        new_shape = (num_overlap_user, mat.shape[1])
+
+        return sp.coo_matrix(
+            (new_data, (new_row, new_col)),
+            shape=new_shape
+        )
 
     def normalize(self, mx):
         """Row-normalize sparse matrix"""
@@ -86,7 +104,7 @@ class DisenCDR(GeneralRecommender):
         sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
         gaussian_noise = torch.randn(mean.size(0), self.opt["hidden_dim"]).cuda(mean.device)
         if self.share_mean.training:
-            sampled_z = gaussian_noise * torch.exp(sigma) + mean
+            sampled_z = gaussian_noise * sigma + mean
         else:
             sampled_z = mean
         kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.ones_like(logstd))
@@ -419,7 +437,7 @@ class LastLayer(nn.Module):
         sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
         gaussian_noise = torch.randn(mean.size(0), self.opt["hidden_dim"]).cuda(mean.device)
         if self.gc1.training:
-            sampled_z = gaussian_noise * torch.exp(sigma) + mean
+            sampled_z = gaussian_noise * sigma + mean
         else:
             sampled_z = mean
         kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.ones_like(logstd))
@@ -622,7 +640,7 @@ class LastLayer2(nn.Module):
         sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
         gaussian_noise = torch.randn(mean.size(0), self.opt["hidden_dim"]).cuda(mean.device)
         if self.gc1.training:
-            sampled_z = gaussian_noise * torch.exp(sigma) + mean
+            sampled_z = gaussian_noise * sigma + mean
         else:
             sampled_z = mean
         kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.ones_like(logstd))

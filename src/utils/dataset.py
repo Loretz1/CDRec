@@ -37,14 +37,21 @@ class RecDataset(object):
         if skip:
             return
 
-        dataset_path = os.path.join(self.config['data_path'], config['dataset'],
-                                    '+'.join(config['domains']),
-                                    "only_overlap_users" if config['only_overlap_users'] else "all_users", (
-                                        f"WarmValid{config['warm_valid_ratio']}_"
-                                        f"WarmTest{config['warm_test_ratio']}_"
-                                        f"ColdValid{config['t_cold_valid']}_"
-                                        f"ColdTest{config['t_cold_test']}"
-                                    ))
+        split_dir = (
+            f"WarmValid{config['warm_valid_ratio']}_"
+            f"WarmTest{config['warm_test_ratio']}_"
+            f"ColdValid{config['t_cold_valid']}_"
+            f"ColdTest{config['t_cold_test']}"
+        )
+        if config['only_overlap_users']:
+            split_dir += f'_{config["k_cores"]}cores'
+        dataset_path = os.path.join(
+            self.config['data_path'],
+            config['dataset'],
+            '+'.join(config['domains']),
+            "only_overlap_users" if config['only_overlap_users'] else "all_users",
+            split_dir
+        )
 
         self.all_users, self.id_mapping, self.train_src, self.train_tgt, self.valid_cold_tgt, self.test_cold_tgt, self.valid_warm_tgt, self.test_warm_tgt, self.modality_embeddings = self._load_data(
             dataset_path)

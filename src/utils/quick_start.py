@@ -67,6 +67,11 @@ def quick_start(model, dataset, domains, save_model=True):
         logger.info('========={}/{}: Parameters:{}={}======='.format(
             idx+1, total_loops, config['hyper_parameters'], hyper_tuple))
 
+        if 'skip_hyper_tuple_num' in config and idx+1 <= config['skip_hyper_tuple_num']:
+            hyper_ret.append((hyper_tuple, None, None, None, None))
+            idx += 1
+            continue
+
         # set random state of dataloader
         train_data.pretrain_setup()
         # model loading and initialization
@@ -133,6 +138,8 @@ def quick_start(model, dataset, domains, save_model=True):
     # log info
     logger.info('\n============ All Over ============\n')
     for (p, valid_warm, test_warm, valid_cold, test_cold) in hyper_ret:
+        if valid_warm == None:
+            continue
         logger.info(f"Parameters: {config['hyper_parameters']} = {p}")
         if config.get("warm_eval", False):
             logger.info("🌐 Warm Evaluation:")

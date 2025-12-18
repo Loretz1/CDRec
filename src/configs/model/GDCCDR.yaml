@@ -12,28 +12,34 @@ training_stages:
     epochs: 1000
     train_batch_size: 1024
     learner: adam
-    learning_rate: [0.00005, 0.0001, 0.0005, 0.001]
+    learning_rate: [0.0001, 0.001]
     learning_rate_scheduler: [1.0, 50]
-    weight_decay: 0.0005
+    weight_decay: [0.005, 0.0005]
 #    clip_grad_norm: {"max_norm": 1.0}
 
 # 3. Fixed Model Parameters Setting
 feature_dim: 128
-hidden_dim: 128
-GNN: [4,3,2,1]
-dropout: [0.2, 0.3]
-leakey: 0.1
-user_batch_size: 64
-bce: False
-margin: 0.3
-beta: [0.1, 0.3, 0.5, 0.7, 0.9]
-log_model_suffix: no_filter_overlap_user_with_kcores
+meta_hidden: 128
+rank_k : 10
+dropout: 0.3
+GNN: [1,3,5]
+alpha: [0.05, 0.2]
+beta: [0.01, 0.1]
+tau_pcl: 0.05
+tau_ecl: 1
+lamda_p: [0.0001, 0.001]
+lamda_e: [0.01, 0.1]
+eval_batch_size: 16
+#log_model_suffix: ~
 #stopping_step: 100
 
 # 4. Model Hyperparameter Search Setting
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.0.learning_rate"
-  - "GNN"
-  - "beta"
-  - "dropout"
+  - "training_stages.0.weight_decay"
+  - 'GNN'
+  - 'alpha'
+  - 'beta'
+  - 'lamda_p'
+  - 'lamda_e'
