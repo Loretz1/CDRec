@@ -23,6 +23,8 @@ class EMCDR(GeneralRecommender):
         # ====== User tower MLPs ======
         self.source_user_mlp = self._make_mlp()
         self.target_user_mlp = self._make_mlp()
+        self.source_item_mlp = self._make_mlp()
+        self.target_item_mlp = self._make_mlp()
 
         # ====== Mapping MLP g(u_src) ======
         hid = 2 * self.feature_dim
@@ -40,6 +42,8 @@ class EMCDR(GeneralRecommender):
         self.apply(xavier_uniform_initialization)
 
     def _make_mlp(self):
+        if self.mlp_layers == 0:
+            return nn.Identity()
         layers = []
         in_dim = self.feature_dim
         for _ in range(self.mlp_layers):
@@ -64,18 +68,18 @@ class EMCDR(GeneralRecommender):
         user = self.source_user_embedding(inter["users"])
         user = self.source_user_mlp(user)
         pos = self.source_item_embedding(inter["pos_items"])
-        pos = self.source_user_mlp(pos)
+        pos = self.source_item_mlp(pos)
         neg = self.source_item_embedding(inter["neg_items"])
-        neg = self.source_user_mlp(neg)
+        neg = self.source_item_mlp(neg)
         return self._bpr(user, pos, neg)
 
     def _target_loss(self, inter):
         user = self.target_user_embedding(inter["users"])
         user = self.target_user_mlp(user)
         pos = self.target_item_embedding(inter["pos_items"])
-        pos = self.target_user_mlp(pos)
+        pos = self.target_item_mlp(pos)
         neg = self.target_item_embedding(inter["neg_items"])
-        neg = self.target_user_mlp(neg)
+        neg = self.target_item_mlp(neg)
         return self._bpr(user, pos, neg)
 
     def _mapping_loss(self, inter):
@@ -105,16 +109,19 @@ class EMCDR(GeneralRecommender):
         u = self.mapping_mlp(u)
 
         all_items = self.target_item_embedding.weight
-        all_items = self.target_user_mlp(all_items)
-        return torch.matmul(u, all_items.T)
+        all_items = self.target_item_mlp(all_items)
+
+        scores = torch.matmul(u, all_items.T)
+        scores[:, 0] = -1e9
+        return scores
 
     def set_train_stage(self, stage_id):
         super(EMCDR, self).set_train_stage(stage_id)
 
         # freeze all first
         for m in [
-            self.source_user_embedding, self.source_item_embedding, self.source_user_mlp,
-            self.target_user_embedding, self.target_item_embedding, self.target_user_mlp,
+            self.source_user_embedding, self.source_item_embedding, self.source_user_mlp, self.source_item_mlp,
+            self.target_user_embedding, self.target_item_embedding, self.target_user_mlp, self.target_item_mlp,
             self.mapping_mlp]:
             self._set_requires_grad(m, False)
 
@@ -122,26 +129,11 @@ class EMCDR(GeneralRecommender):
             self._set_requires_grad(self.source_user_embedding, True)
             self._set_requires_grad(self.source_item_embedding, True)
             self._set_requires_grad(self.source_user_mlp, True)
+            self._set_requires_grad(self.source_item_mlp, True)
         elif stage_id == 1:  # target
             self._set_requires_grad(self.target_user_embedding, True)
             self._set_requires_grad(self.target_item_embedding, True)
             self._set_requires_grad(self.target_user_mlp, True)
+            self._set_requires_grad(self.target_item_mlp, True)
         elif stage_id == 2:  # mapping
             self._set_requires_grad(self.mapping_mlp, True)
-
-    def show_all_params(self):
-        print("\n===== All Parameters in Model =====")
-        for name, p in self.named_parameters():
-            print(f"{name:50s} | size={tuple(p.shape)} | requires_grad={p.requires_grad}")
-        print("===================================\n")
-
-    def show_params_and_grads(self):
-        print("\n===== PARAM & GRAD CHECK =====")
-        for name, p in self.named_parameters():
-            req = p.requires_grad
-            if p.grad is None:
-                grad_info = "grad=None"
-            else:
-                grad_info = f"grad_mean={p.grad.mean().item():.6f}, grad_std={p.grad.std().item():.6f}"
-            print(f"{name:50s} | train={req} | {grad_info}")
-        print("===================================\n")

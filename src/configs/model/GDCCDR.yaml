@@ -22,18 +22,18 @@ feature_dim: 128
 meta_hidden: 128
 rank_k : 10
 dropout: 0.3
+tau_pcl: 0.05
+tau_ecl: 1
+eval_batch_size: 16
+#log_model_suffix: ~
+
+# 4. Model Hyperparameter Grid Search Setting
 GNN: [1,3,5]
 alpha: [0.05, 0.2]
 beta: [0.01, 0.1]
-tau_pcl: 0.05
-tau_ecl: 1
 lamda_p: [0.0001, 0.001]
 lamda_e: [0.01, 0.1]
-eval_batch_size: 16
-#log_model_suffix: ~
-#stopping_step: 100
 
-# 4. Model Hyperparameter Search Setting
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.0.learning_rate"

@@ -24,25 +24,23 @@ training_stages:
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
   - name: mapping_training
-    state: OVERLAP_USER
+    state: OVERLAP
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.005, 0.01]
+    learning_rate: [ 0.0001,0.001,0.01 ]
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
 
 # 3. Fixed Model Parameters Setting
-feature_dim: 64
-mlp_hidden_dim: 128
-dropout: 0.2
-loss_type: bpr
+feature_dim: 10
+meta_dim: 50
 # 4. Model Hyperparameter Grid Search Setting
-mlp_layers: [2,0]
+history_len: [10, 20, 40]
 
 # hyperparameter search space
 hyper_parameters:
   - training_stages.0.epochs
   - training_stages.1.epochs
   - training_stages.2.learning_rate
-  - mlp_layers
+  - history_len

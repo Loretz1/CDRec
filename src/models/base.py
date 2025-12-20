@@ -15,9 +15,7 @@ class Base(GeneralRecommender):
         self.dropout = config["dropout"]
         self.loss_type = config["loss_type"].lower()
 
-        self.source_user_embedding = nn.Embedding(self.num_users_src + 1, self.feature_dim, padding_idx=0)
         self.target_user_embedding = nn.Embedding(self.num_users_tgt + 1, self.feature_dim, padding_idx=0)
-        self.source_item_embedding = nn.Embedding(self.num_items_src + 1, self.feature_dim, padding_idx=0)
         self.target_item_embedding = nn.Embedding(self.num_items_tgt + 1, self.feature_dim, padding_idx=0)
 
         def make_mlp(in_dim, hidden_dim, layers):
@@ -32,8 +30,8 @@ class Base(GeneralRecommender):
                 last_dim = hidden_dim
             return nn.Sequential(*mlp)
 
-        self.source_mlp = make_mlp(self.feature_dim, self.mlp_hidden_dim, self.mlp_layers)
-        self.target_mlp = make_mlp(self.feature_dim, self.mlp_hidden_dim, self.mlp_layers)
+        self.target_mlp_user = make_mlp(self.feature_dim, self.mlp_hidden_dim, self.mlp_layers)
+        self.target_mlp_item = make_mlp(self.feature_dim, self.mlp_hidden_dim, self.mlp_layers)
 
         if self.loss_type == "bpr":
             self.criterion = BPRLoss()
@@ -43,51 +41,35 @@ class Base(GeneralRecommender):
             raise ValueError(f"Unsupported loss_type: {self.loss_type}")
         self.apply(xavier_uniform_initialization)
 
-    def forward(self, user_ids, pos_ids, neg_ids, domain):
-        if domain == 0:
-            user_emb = self.source_user_embedding(user_ids)
-            pos_emb = self.source_item_embedding(pos_ids)
-            neg_emb = self.source_item_embedding(neg_ids)
-            user_emb = self.source_mlp(user_emb)
-            pos_emb = self.source_mlp(pos_emb)
-            neg_emb = self.source_mlp(neg_emb)
-        else:
-            user_emb = self.target_user_embedding(user_ids)
-            pos_emb = self.target_item_embedding(pos_ids)
-            neg_emb = self.target_item_embedding(neg_ids)
-            user_emb = self.target_mlp(user_emb)
-            pos_emb = self.target_mlp(pos_emb)
-            neg_emb = self.target_mlp(neg_emb)
+    def forward(self, user_ids, pos_ids, neg_ids):
+        user_emb = self.target_user_embedding(user_ids)
+        pos_emb = self.target_item_embedding(pos_ids)
+        neg_emb = self.target_item_embedding(neg_ids)
+        user_emb = self.target_mlp_user(user_emb)
+        pos_emb = self.target_mlp_item(pos_emb)
+        neg_emb = self.target_mlp_item(neg_emb)
 
         return user_emb, pos_emb, neg_emb
 
     def calculate_loss_for_0(self, interaction):
-        user_src = interaction['users_src']
-        src_pos = interaction['pos_items_src']
-        src_neg = interaction['neg_items_src']
-        user_tgt = interaction['users_tgt']
-        tgt_pos = interaction['pos_items_tgt']
-        tgt_neg = interaction['neg_items_tgt']
+        user_tgt = interaction['users']
+        tgt_pos = interaction['pos_items']
+        tgt_neg = interaction['neg_items']
 
-        src_user, src_pos_emb, src_neg_emb = self.forward(user_src, src_pos, src_neg, domain=0)
-        tgt_user, tgt_pos_emb, tgt_neg_emb = self.forward(user_tgt, tgt_pos, tgt_neg, domain=1)
+        tgt_user, tgt_pos_emb, tgt_neg_emb = self.forward(user_tgt, tgt_pos, tgt_neg)
 
-        pos_src = (src_user * src_pos_emb).sum(dim=-1)
-        neg_src = (src_user * src_neg_emb).sum(dim=-1)
         pos_tgt = (tgt_user * tgt_pos_emb).sum(dim=-1)
         neg_tgt = (tgt_user * tgt_neg_emb).sum(dim=-1)
 
         if self.loss_type == "bce":
-            pos_label = torch.ones_like(pos_src)
-            neg_label = torch.zeros_like(neg_src)
+            pos_label = torch.ones_like(pos_tgt)
+            neg_label = torch.zeros_like(neg_tgt)
             loss = (
-                    self.criterion(pos_src, pos_label)
-                    + self.criterion(neg_src, neg_label)
-                    + self.criterion(pos_tgt, pos_label)
+                    self.criterion(pos_tgt, pos_label)
                     + self.criterion(neg_tgt, neg_label)
             )
         elif self.loss_type == "bpr":
-            loss = self.criterion(pos_src, neg_src) + self.criterion(pos_tgt, neg_tgt)
+            loss = self.criterion(pos_tgt, neg_tgt)
         else:
             raise ValueError(f"Unsupported loss_type: {self.loss_type}")
 
@@ -99,14 +81,10 @@ class Base(GeneralRecommender):
 
     def full_sort_predict(self, interaction, is_warm):
         user = interaction[0].long()
-        if is_warm:
-            user_emb = self.target_user_embedding(user)
-            user_emb = self.target_mlp(user_emb)
-        else:
-            user_emb = self.source_user_embedding(user)
-            user_emb = self.source_mlp(user_emb)
+        user_emb = self.target_user_embedding(user)
+        user_emb = self.target_mlp_user(user_emb)
         all_tgt_items_emb = self.target_item_embedding.weight
-        all_tgt_items_emb = self.target_mlp(all_tgt_items_emb)
+        all_tgt_items_emb = self.target_mlp_item(all_tgt_items_emb)
         scores_tgt = torch.matmul(user_emb, all_tgt_items_emb.T)  # [B, n_target_items + 1]
         return scores_tgt
 

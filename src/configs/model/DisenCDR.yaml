@@ -12,7 +12,7 @@ training_stages:
     epochs: 1000
     train_batch_size: 1024
     learner: adam
-    learning_rate: [0.00005, 0.0001, 0.0005, 0.001]
+    learning_rate: [ 0.01, 0.001, 0.0001]
     learning_rate_scheduler: [1.0, 50]
     weight_decay: 0.0005
 #    clip_grad_norm: {"max_norm": 1.0}
@@ -20,17 +20,17 @@ training_stages:
 # 3. Fixed Model Parameters Setting
 feature_dim: 128
 hidden_dim: 128
-GNN: [4,3,2,1]
-dropout: [0.2, 0.3]
 leakey: 0.1
 user_batch_size: 64
 bce: False
 margin: 0.3
-beta: [0.1, 0.3, 0.5, 0.7, 0.9]
-log_model_suffix: no_filter_overlap_user_with_kcores
-#stopping_step: 100
+#log_model_suffix: no_filter_overlap_user_with_kcores
 
-# 4. Model Hyperparameter Search Setting
+# 4. Model Hyperparameter Grid Search Setting
+GNN: [3,2]
+dropout: [0.2, 0.3]
+beta: [0.1, 0.3, 0.5, 0.7, 0.9]
+
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.0.learning_rate"

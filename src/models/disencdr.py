@@ -101,13 +101,14 @@ class DisenCDR(GeneralRecommender):
 
     def reparameters(self, mean, logstd):
         # sigma = 0.1 + 0.9 * F.softplus(torch.exp(logstd))
-        sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
+        # sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
+        sigma = torch.exp(0.1 + 0.9 * F.softplus(torch.clamp_max(logstd, 0.4)))
         gaussian_noise = torch.randn(mean.size(0), self.opt["hidden_dim"]).cuda(mean.device)
         if self.share_mean.training:
             sampled_z = gaussian_noise * sigma + mean
         else:
             sampled_z = mean
-        kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.ones_like(logstd))
+        kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.zeros_like(logstd))
         return sampled_z, (1 - self.opt["beta"]) * kld_loss
 
     def calculate_loss(self, interaction, epoch_idx):
@@ -434,13 +435,14 @@ class LastLayer(nn.Module):
 
     def reparameters(self, mean, logstd):
         # sigma = 0.1 + 0.9 * F.softplus(torch.exp(logstd))
-        sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
+        # sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
+        sigma = torch.exp(0.1 + 0.9 * F.softplus(torch.clamp_max(logstd, 0.4)))
         gaussian_noise = torch.randn(mean.size(0), self.opt["hidden_dim"]).cuda(mean.device)
         if self.gc1.training:
             sampled_z = gaussian_noise * sigma + mean
         else:
             sampled_z = mean
-        kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.ones_like(logstd))
+        kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.zeros_like(logstd))
         return sampled_z, kld_loss
 
     def forward(self, ufea, vfea, UV_adj,VU_adj):
@@ -637,13 +639,14 @@ class LastLayer2(nn.Module):
 
     def reparameters(self, mean, logstd):
         # sigma = 0.1 + 0.9 * F.softplus(torch.exp(logstd))
-        sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
+        # sigma = torch.exp(0.1 + 0.9 * F.softplus(logstd))
+        sigma = torch.exp(0.1 + 0.9 * F.softplus(torch.clamp_max(logstd, 0.4)))
         gaussian_noise = torch.randn(mean.size(0), self.opt["hidden_dim"]).cuda(mean.device)
         if self.gc1.training:
             sampled_z = gaussian_noise * sigma + mean
         else:
             sampled_z = mean
-        kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.ones_like(logstd))
+        kld_loss = self._kld_gauss(mean, logstd, torch.zeros_like(mean), torch.zeros_like(logstd))
         return sampled_z, kld_loss
 
     def forward(self, source_ufea, target_ufea, source_UV_adj, source_VU_adj, target_UV_adj, target_VU_adj, source_rate):

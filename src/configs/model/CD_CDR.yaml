@@ -30,6 +30,8 @@ uncon_p: 0.1
 diffuser_type: mlp1
 stopping_step: 200
 
-# 4. # hyperparameter search space
+# 4. Model Hyperparameter Grid Search Setting
+
+# hyperparameter search space
 hyper_parameters:
   - training_stages.0.learning_rate

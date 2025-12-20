@@ -1,11 +1,11 @@
 # Overwrite Dataset Setting
-only_overlap_users: False
+only_overlap_users: True
 k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
 shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
 warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
 warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
-t_cold_valid: 0.1 # cold user in the target domain valid set
-t_cold_test: 0.1 # cold user in the target domain test set
+t_cold_valid: 0 # cold user in the target domain valid set
+t_cold_test: 0 # cold user in the target domain test set
 
 # 1. Eval Setting
 warm_eval: True  # Whether to enable warm user evaluation
@@ -18,7 +18,7 @@ cold_start_eval: False # Whether to enable cold start user evaluation
 training_stages:
   - name: target_training
     state: TARGET
-    epochs: [ 30,60,90 ]
+    epochs: [ 30,60 ]
     train_batch_size: 2048
     learner: adam
     learning_rate: 0.01
@@ -39,12 +39,13 @@ feature_dim: 64
 transform_weight: 1
 n_layers: 2
 tau: 0.1
-gamma: [0.3, 0.7]
 alpha: 0.2
-lambda: [0.00001, 0.0001, 0.001]
-#stopping_step: 100
+log_model_suffix: on_overlap_dataset
 
-# 4. Model Hyperparameter Search Setting
+# 4. Model Hyperparameter Grid Search Setting
+lambda: [0.00001, 0.0001, 0.001]
+gamma: [0.3, 0.7]
+
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.1.learning_rate"
