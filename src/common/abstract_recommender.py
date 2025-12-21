@@ -12,6 +12,12 @@ class AbstractRecommender(nn.Module):
     def post_epoch_processing(self):
         pass
 
+    def pre_batch_processing(self):
+        pass
+
+    def post_batch_processing(self):
+        pass
+
     def set_train_stage(self, stage_id):
         r"""
          Configure the model for the current training stage.

@@ -136,6 +136,7 @@ class Trainer(AbstractTrainer):
         for batch_idx, interaction in enumerate(train_data):
             # check the valid of the interaction
             # self._check_interaction_valid(train_data, interaction)
+            self.model.pre_batch_processing()
 
             self.optimizer.zero_grad()
             losses = loss_func(interaction, epoch_idx)
@@ -157,6 +158,7 @@ class Trainer(AbstractTrainer):
                 clip_grad_norm_(self.model.parameters(), **self.clip_grad_norm)
             self.optimizer.step()
             loss_batches.append(loss.detach())
+            self.model.post_batch_processing()
             # for test
             # if batch_idx == 0:
             #    break
