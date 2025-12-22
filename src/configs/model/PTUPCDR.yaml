@@ -33,8 +33,8 @@ training_stages:
     weight_decay: 0.0
 
 # 3. Fixed Model Parameters Setting
-feature_dim: 10
-meta_dim: 50
+feature_dim: 64
+meta_dim: 128
 # 4. Model Hyperparameter Grid Search Setting
 history_len: [10, 20, 40]
 
