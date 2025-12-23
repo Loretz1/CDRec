@@ -116,6 +116,34 @@ class AmazonDataProcessor:
         return all_item_seqs
 
     def run_full_pipeline(self):
+        """
+        功能：
+            执行 Amazon2014 单域数据集的完整处理流程，生成该 domain 的基础 processed 数据。
+        主要流程：
+            1. 下载原始 reviews / meta 数据（若本地不存在）
+            2. 解析 reviews，构建用户的交互序列，如果config['shuffle_user_sequence']则打乱每个用户的交互，否则交互按时间顺序排序
+            3. 生成并保存 processed/all_item_seqs.json
+        产出文件：
+            - processed/all_item_seqs.json
+              （单域内所有用户的完整交互序列）
+                {
+                  "<raw_user_id_1>": [
+                    "<raw_item_id_1>",
+                    "<raw_item_id_2>",
+                    "<raw_item_id_3>",
+                    ...
+                  ],
+                  "<raw_user_id_2>": [
+                    "<raw_item_id_4>",
+                    "<raw_item_id_5>",
+                    ...
+                  ],
+                  ...
+                }
+        说明：
+            - 若 processed 数据已存在，将自动跳过重复处理
+            - 该方法仅处理单域数据，不涉及跨域划分或重编号
+        """
         logger.info(f"Starting Amazon Reviews 2014 dataset processing - Domain: {self.domain}")
 
         self._check_available_domain()
