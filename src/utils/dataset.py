@@ -6,8 +6,46 @@ import numpy as np
 from utils.enum_type import TrainDataLoaderState
 import random
 
-
 class RecDataset(object):
+    """
+    功能：
+        从 joint dataset 目录加载跨域推荐所需的数据文件，
+        并按训练阶段组织为可直接使用的交互数据视图。
+
+    数据来源：
+        从以下路径读取数据：
+            {data_path}/{dataset}/{src}+{tgt}/{only_overlap_users|all_users}/{split_dir}/
+
+        读取的文件包括：
+            - all_users.json
+            - id_mapping.json
+            - train_src.pkl
+            - train_tgt.pkl
+            - valid_cold_tgt.pkl
+            - test_cold_tgt.pkl
+            - valid_warm_tgt.pkl
+            - test_warm_tgt.pkl
+            - modality_emb_src/*.npy（可选）
+            - modality_emb_tgt/*.npy（可选）
+
+    数据处理：
+        - 加载 src / tgt 的交互数据（DataFrame，列为 [user, item]）
+        - 加载并对齐多模态 embedding（为 0 号 padding 添加全 0 向量）
+        - 从训练集构建正样本集合：
+            * positive_items_src
+            * positive_items_tgt
+        - 根据训练阶段需要构建派生数据：
+            * train_both（src + tgt，带 domain 标记）
+            * train_overlap（仅 overlap 用户的 src + tgt）
+            * train_overlap_user（仅 overlap 用户 ID）
+    对外功能：
+        - split()：
+            返回 train / valid / test 三个 RecDataset 视图
+        - set_state_for_train(state)：
+            根据 TrainDataLoaderState 选择当前活跃的交互 DataFrame
+        - __getitem__ / __len__：
+            按当前 state 提供样本访问接口
+    """
     # Fields for train/valid/test
     META_FIELDS = [
         "config", "logger",
@@ -151,6 +189,31 @@ class RecDataset(object):
         return pd.concat([src_df, tgt_df], axis=0, ignore_index=True)
 
     def split(self):
+        """
+        功能：
+            将当前 RecDataset 按用途拆分为训练、验证和测试三个数据集视图。
+        处理逻辑：
+            - 训练集（train_dataset）：
+                * 保留训练阶段使用的数据：
+                  train_src / train_tgt / train_both /
+                  train_overlap / train_overlap_user (如果构建了的话)
+                * 同时保留：
+                  modality_embeddings、positive_items、id_mapping
+            - 验证集（valid_dataset）：
+                * 使用目标域验证数据：
+                  valid_cold_tgt、valid_warm_tgt
+                * 重命名为：
+                  cold_tgt、warm_tgt
+            - 测试集（test_dataset）：
+                * 使用目标域测试数据：
+                  test_cold_tgt、test_warm_tgt
+                * 重命名为：
+                  cold_tgt、warm_tgt
+        输出：
+            train_dataset : RecDataset
+            valid_dataset : RecDataset
+            test_dataset  : RecDataset
+        """
         train_dataset = self.copy(
             keep_fields=["train_both", "train_src", "train_tgt", "train_overlap", "train_overlap_user",
                          "modality_embeddings",
@@ -166,6 +229,24 @@ class RecDataset(object):
         return train_dataset, valid_dataset, test_dataset
 
     def copy(self, keep_fields):
+        """
+        功能：
+            基于当前 RecDataset 创建一个浅拷贝的数据集对象，
+            仅保留指定字段，用于构造 train / valid / test 数据视图。
+            由Split方法调用。
+        处理逻辑：
+            - 创建一个新的 RecDataset 实例（skip=True，不重新加载数据）
+            - 复制所有 META_FIELDS（配置、用户与规模信息）
+            - 仅当字段名在 keep_fields 中时，才复制：
+                * BASIC_DATA_FIELDS 中的属性
+                * DATAFRAME_FIELDS 中对应的 DataFrame 到 new_dataset.df
+        输入：
+            keep_fields: List[str]
+                需要保留的字段名称列表
+        输出：
+            new_dataset: RecDataset
+                仅包含指定字段的数据集视图
+        """
         new_dataset = RecDataset(self.config, skip=True)
         for key in self.META_FIELDS:
             setattr(new_dataset, key, getattr(self, key))
@@ -178,6 +259,27 @@ class RecDataset(object):
         return new_dataset
 
     def set_state_for_train(self, state):
+        """
+        功能：
+            在 split() 之后生成的训练数据集上，
+            根据训练阶段状态选择当前使用的训练数据视图。
+        处理逻辑：
+            - 根据传入的 TrainDataLoaderState，
+              将对应的 DataFrame 设为当前活跃数据（_active_df）：
+                * BOTH          → train_both
+                * SOURCE        → train_src
+                * TARGET        → train_tgt
+                * OVERLAP       → train_overlap
+                * OVERLAP_USER  → train_overlap_user
+            - 重置活跃 DataFrame 的索引
+        输入：
+            state: TrainDataLoaderState
+                指定当前训练阶段的数据使用方式
+                （仅适用于 split() 返回的 train_dataset）
+        输出：
+            self
+                返回自身，支持链式调用
+        """
         assert isinstance(state, TrainDataLoaderState), "state must be a TrainDataLoaderState"
         self.state = state
 
