@@ -1,0 +1,19 @@
+# {dataset_name}.yaml
+- 功能：配置数据集参数
+- 需要包含：
+  1. data_path：String，数据集路径
+  2. modalities：List，joint处理时需要处理的模态emb，每一项需包含：
+     - name: 模态处理名称，用户搜寻对应的模态处理方法（3个）
+     - emb_model：模态处理模型
+     - emb_batch_size
+     - emb_dim：模态处理模型输出的模态emb维度
+     - emb_pca：最终处理完成后的final_emb的维度
+     - **enabled**：是否启用该模态，如果为false则在数据准备阶段无需准备该模态数据
+  3. only_overlap_users：是否对joint数据集筛选重叠用户+kcores操作，即joint数据集使用only_overlap_users/all_users
+  4. k_cores：only_overlap_users=True时的kcores的核数
+  5. shuffle_user_sequence：在single处理时是否打乱每个用户的交互历史，若为False则交互历史按照时间排序，并在后续按照时间划分train/valid/test
+  6. warm_valid_ratio：每个热用户的交互划分为valid的比例
+  7. warm_test_ratio：每个热用户的交互划分为test的比例
+  8. t_cold_valid：重叠用户中划分出valid冷用户的比例
+  9. t_cold_test：重叠用户中划分出test冷用户的比例
+  10. 其它自定义模态处理时需要的配置，如：openai_api_key、openai_base_url等

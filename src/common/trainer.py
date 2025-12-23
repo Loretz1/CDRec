@@ -114,18 +114,43 @@ class Trainer(AbstractTrainer):
         return scheduler
 
     def _train_epoch(self, train_data, epoch_idx, loss_func=None):
-        r"""Train the model in an epoch
+        """
+        功能：
+            执行一个 epoch 的模型训练，遍历训练数据并完成前向、反向与参数更新。
 
-        Args:
-            train_data (DataLoader): The train data.
-            epoch_idx (int): The current epoch id.
-            loss_func (function): The loss function of :attr:`model`. If it is ``None``, the loss function will be
-                :attr:`self.model.calculate_loss`. Defaults to ``None``.
+        数据来源：
+            - train_data：TrainDataLoader
+                提供当前训练阶段的 batch 数据
+            - loss_func：
+                若为 None，默认使用 model.calculate_loss
 
-        Returns:
-            float/tuple: The sum of loss returned by all batches in this epoch. If the loss in each batch contains
-            multiple parts and the model return these multiple parts loss instead of the sum of loss, It will return a
-            tuple which includes the sum of loss in each part.
+        处理逻辑：
+            - 若 req_training 为 False，直接返回空损失
+            - 将模型切换为训练模式（model.train()）
+            - 对每个 batch：
+                1) 调用 model.pre_batch_processing()
+                2) 前向计算损失（loss_func）
+                3) 累计损失（支持单损失或多损失 tuple）
+                4) 反向传播（loss.backward()）
+                5) 可选梯度裁剪（clip_grad_norm）
+                6) 优化器更新参数（optimizer.step()）
+                7) 调用 model.post_batch_processing()
+            - 若检测到 NaN 损失，提前终止该 epoch
+
+        输入：
+            train_data: TrainDataLoader
+                训练数据加载器
+            epoch_idx: int
+                当前 epoch 编号
+            loss_func: callable, optional
+                自定义损失函数，输入为 (interaction, epoch_idx)
+
+        输出：
+            total_loss:
+                - float：单损失情况下为该 epoch 的累计损失
+                - tuple：多损失情况下为各损失分量的累计值
+            loss_batches: List[Tensor]
+                每个 batch 的损失值（detach 后）
         """
         if not self.req_training:
             return 0.0, []
@@ -165,14 +190,27 @@ class Trainer(AbstractTrainer):
         return total_loss, loss_batches
 
     def _valid_epoch(self, valid_data):
-        r"""Valid the model with valid data
+        """
+        功能：
+            在验证阶段对模型进行评估，
+            分别返回 warm 和 cold 用户的评估结果与主评估指标。
 
-        Args:
-            valid_data (DataLoader): the valid data
+        输入：
+            valid_data: EvalDataLoader
+                验证数据加载器
 
-        Returns:
-            float: valid score
-            dict: valid result
+        输出：
+            Tuple:
+                (
+                    valid_score_warm,    # float or None
+                    valid_result_warm,   # dict
+                    valid_score_cold,    # float or None
+                    valid_result_cold    # dict
+                )
+
+            说明：
+                - 若对应评估模式未启用（warm / cold），
+                  该部分返回值为 None
         """
         valid_result_warm, valid_result_cold = self.evaluate(valid_data)
         valid_score_warm = None if not valid_data.warm else valid_result_warm[self.valid_metric] if self.valid_metric else valid_result_warm['NDCG@20']
@@ -185,6 +223,9 @@ class Trainer(AbstractTrainer):
             return True
 
     def _generate_train_loss_output(self, stage_id, epoch_idx, s_time, e_time, losses):
+        """
+            根据单个 epoch 的训练结果，生成格式化的训练日志字符串。
+        """
         duration = e_time - s_time
         if isinstance(losses, tuple):
             loss_str = ' | '.join(f"Loss{i + 1}: {loss:.4f}" for i, loss in enumerate(losses))
@@ -205,6 +246,10 @@ class Trainer(AbstractTrainer):
                               update_warm=False, update_cold=False,
                               stop_warm=False, stop_cold=False,
                               elapsed_time=None):
+        """
+            根据当前 epoch 的评估结果，生成格式化的评估日志字符串，
+            用于输出验证或测试阶段的 warm / cold 评估信息。
+        """
         eval_output = ""
 
         header = f"\n{'=' * 30} [Epoch {epoch_idx}] {mode} Summary {'=' * 30}\n"
@@ -258,6 +303,55 @@ class Trainer(AbstractTrainer):
             assert (user_tgt, pos_items_tgt) in review1 and (interaction['neg_items_tgt'][i] not in train_data.dataset.positive_items_tgt[interaction['users_tgt'][i].item()])
 
     def fit(self, stage_id, train_data, valid_data=None, test_data=None, saved=False, verbose=True):
+        """
+        功能：
+            在指定训练阶段（stage）下执行模型训练，
+            并按配置周期性进行验证与测试评估。
+
+        训练流程：
+            - 对每个 epoch：
+                1) 调用 model.pre_epoch_processing()
+                2) 调用 _train_epoch() 执行一轮训练
+                3) 更新学习率调度器
+                4) 记录并输出训练损失
+                5) 调用 model.post_epoch_processing()
+
+            - 若目前stage是最后一个stage，则评估（self.eval == True），需要对模型进行eval和早停判断：
+                * 每隔 eval_step 个 epoch：
+                    - 在 valid_data 上执行验证评估
+                    - 基于指定指标执行 early stopping（warm / cold 分别判断）
+                    - 在 test_data 上执行测试评估
+                    - 记录在验证集最优时对应的测试结果
+                * 当 warm 与 cold 均触发 early stopping 时，提前终止训练
+
+        输入：
+            stage_id: int
+                当前训练阶段编号（用于多阶段训练）
+            train_data: TrainDataLoader
+                训练数据加载器
+            valid_data: EvalDataLoader, optional
+                验证数据加载器
+            test_data: EvalDataLoader, optional
+                测试数据加载器
+            saved: bool
+                是否保存模型（当前实现中未使用）
+            verbose: bool
+                是否打印训练与评估日志
+
+        输出：
+            Tuple:
+                (
+                    best_valid_score_warm,
+                    best_valid_result_warm,
+                    best_test_upon_valid_warm,
+                    best_valid_score_cold,
+                    best_valid_result_cold,
+                    best_test_upon_valid_cold
+                )
+
+            若未开启评估（self.eval == False），返回：
+                (None, None, None, None, None, None)
+        """
         for epoch_idx in range(self.start_epoch, self.epochs):
             # train
             training_start_time = time()
@@ -347,9 +441,47 @@ class Trainer(AbstractTrainer):
 
     @torch.no_grad()
     def evaluate(self, eval_data, is_test=False, idx=0):
-        r"""Evaluate the model based on the eval data.
-        Returns:
-            dict: eval result, key is the eval metric and value in the corresponding metric value
+        """
+        功能：
+            在评估阶段对模型进行 full-sort 推荐评估，
+            分别计算 warm 用户和 cold 用户的 Top-K 推荐指标。
+
+        数据来源：
+            - eval_data：EvalDataLoader
+                提供评估阶段的用户、正样本 mask 和评估物品信息
+
+        评估流程：
+            - 将模型切换为 eval 模式（model.eval()）
+            - 对 warm 用户评估（若启用）：
+                1) 设置评估状态为 WARM（eval_data.set_state_for_eval）
+                2) 按 batch 遍历评估用户
+                3) 调用 model.full_sort_predict(...) 计算用户对所有目标域物品的评分
+                4) 使用训练阶段正样本 mask 屏蔽已交互物品
+                5) 屏蔽 padding item（item 0）
+                6) 对评分结果进行 Top-K 排序
+                7) 调用 TopKEvaluator.evaluate 计算评估指标
+            - 对 cold 用户评估（若启用）：
+                * 流程与 warm 用户一致，但使用 cold 用户评估数据
+                * 调用 full_sort_predict(..., is_warm=False)
+
+        输入：
+            eval_data: EvalDataLoader
+                验证或测试阶段的数据加载器
+            is_test: bool
+                是否为测试阶段（传递给 evaluator，用于结果区分）
+            idx: int
+                当前评估编号（用于多次评估区分）
+
+        输出：
+            Tuple:
+                (
+                    result_warm,   # dict or None
+                    result_cold    # dict or None
+                )
+
+            说明：
+                - result_warm / result_cold 为 Top-K 指标字典
+                - 若对应评估模式未启用，则返回 None
         """
         self.model.eval()
         result_warm = None
@@ -411,6 +543,34 @@ class Trainer(AbstractTrainer):
             plt.savefig(save_path)
 
     def set_train_stage(self, stage_id, stage_config, eval = False):
+        """
+        功能：
+            设置并初始化指定训练阶段（stage）的训练配置，
+            包括模型状态、优化器和学习率调度器。
+
+        处理逻辑：
+            - 从 stage_config 中读取并设置训练相关参数：
+                * self.epochs
+                * self.learner
+                * self.learning_rate
+                * self.learning_rate_scheduler
+                * self.weight_decay
+                * self.clip_grad_norm
+            - 调用 model.set_train_stage(stage_id)，
+              将模型切换到对应训练阶段
+            - 基于当前模型参数构建优化器（_build_optimizer），优化requires_grad的参数
+            - 构建学习率调度器（_build_lr_scheduler）
+            - 设置是否在该阶段启用评估（self.eval）
+
+        输入：
+            stage_id: int
+                当前训练阶段编号
+            stage_config: dict
+                当前训练阶段的配置参数
+            eval: bool
+                是否在该训练阶段启用验证 / 测试评估
+
+        """
         train_keys = ["epochs", "learner", "learning_rate", "learning_rate_scheduler", "weight_decay", "clip_grad_norm"]
 
         for key in train_keys:
