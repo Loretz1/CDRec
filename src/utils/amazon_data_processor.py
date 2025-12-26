@@ -88,11 +88,14 @@ class AmazonDataProcessor:
         for user, item, time in reviews:
             item_seqs[user].append((item, time))
 
+        # fix the seed for shuffle
+        rng = random.Random(999)
+
         for user, item_time in item_seqs.items():
             item_time.sort(key=lambda x: x[1])
             seq = [item for item, _ in item_time]
             if self.config.get("shuffle_user_sequence", True):
-                random.shuffle(seq)
+                rng.shuffle(seq)
             item_seqs[user] = seq
         return item_seqs
 

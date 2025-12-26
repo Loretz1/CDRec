@@ -84,20 +84,24 @@ def split_users_and_reindex(config, joint_path, all_item_seqs):
             id_mapping = json.load(f)
         return all_users, id_mapping
 
-    users_src = set(all_item_seqs['src'].keys())
-    users_tgt = set(all_item_seqs['tgt'].keys())
-    overlap_users = users_src & users_tgt
-    src_only_users = users_src - overlap_users
-    tgt_only_users = users_tgt - overlap_users
+    users_src = sorted(all_item_seqs['src'].keys())
+    users_tgt = sorted(all_item_seqs['tgt'].keys())
 
-    overlap_list = np.random.permutation(list(overlap_users))
+    users_src_set = set(users_src)
+    users_tgt_set = set(users_tgt)
+    overlap_users = sorted(users_src_set & users_tgt_set)
+    src_only_users = sorted(users_src_set - set(overlap_users))
+    tgt_only_users = sorted(users_tgt_set - set(overlap_users))
+
+    rng = np.random.RandomState(999)
+    overlap_list = rng.permutation(overlap_users)
     num_overlap = len(overlap_list)
     num_valid_cold = int(num_overlap * config['t_cold_valid'])
     num_test_cold = int(num_overlap * config['t_cold_test'])
     assert num_valid_cold + num_test_cold <= num_overlap, "Sum of t_cold_valid and t_cold_test causes user overflow."
-    valid_cold_users = set(overlap_list[:num_valid_cold])
-    test_cold_users = set(overlap_list[num_valid_cold:num_valid_cold + num_test_cold])
-    overlap_users = set(overlap_list[num_valid_cold + num_test_cold:])
+    valid_cold_users = sorted(overlap_list[:num_valid_cold])
+    test_cold_users = sorted(overlap_list[num_valid_cold:num_valid_cold + num_test_cold])
+    overlap_users = sorted(overlap_list[num_valid_cold + num_test_cold:])
 
     all_users = {
         'overlap_users': overlap_users,
@@ -114,19 +118,25 @@ def split_users_and_reindex(config, joint_path, all_item_seqs):
         id_mapping['src']['id2user'].append(u)
         id_mapping['tgt']['user2id'][u] = i
         id_mapping['tgt']['id2user'].append(u)
-    for i, u in enumerate(all_users['valid_cold_users'] | all_users['test_cold_users'] | all_users[
-        'src_only_users'], start=len(all_users['overlap_users']) + 1):
+    src_extra_users = (
+            all_users['valid_cold_users']
+            + all_users['test_cold_users']
+            + all_users['src_only_users']
+    )
+    for i, u in enumerate(src_extra_users, start=len(all_users['overlap_users']) + 1):
         id_mapping['src']['user2id'][u] = i
         id_mapping['src']['id2user'].append(u)
     for i, u in enumerate(all_users['tgt_only_users'], start=len(all_users['overlap_users']) + 1):
         id_mapping['tgt']['user2id'][u] = i
         id_mapping['tgt']['id2user'].append(u)
+
     for domain in ['src', 'tgt']:
-        for user, items in all_item_seqs[domain].items():
-            for item in items:
-                if item not in id_mapping[domain]['item2id']:
-                    id_mapping[domain]['item2id'][item] = len(id_mapping[domain]['id2item'])
-                    id_mapping[domain]['id2item'].append(item)
+        all_items = set()
+        for items in all_item_seqs[domain].values():
+            all_items.update(items)
+        for item in sorted(all_items):
+            id_mapping[domain]['item2id'][item] = len(id_mapping[domain]['id2item'])
+            id_mapping[domain]['id2item'].append(item)
 
     all_users = {
         'overlap_users': [id_mapping['src']['user2id'][u] for u in all_users['overlap_users']],
@@ -204,7 +214,9 @@ def filter_overlap_users(all_item_seqs, k, joint_dataset_name):
     return all_item_seqs
 
 def to_df(inter):
-    return pd.DataFrame(inter, columns=['user', 'item'])
+    df = pd.DataFrame(inter, columns=['user', 'item'])
+    df = df.sort_values(['user', 'item']).reset_index(drop=True)
+    return df
 
 def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
     """
@@ -252,19 +264,23 @@ def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
     valid_cold_tgt, test_cold_tgt = [], []
     valid_warm_tgt, test_warm_tgt = [], []
 
-    for raw_uid, item_seq in all_item_seqs['src'].items():
+    for raw_uid in sorted(all_item_seqs['src']):
+        item_seq = all_item_seqs['src'][raw_uid]
         uid = id_mapping['src']['user2id'][raw_uid]
         for raw_iid in item_seq:
             iid = id_mapping['src']['item2id'][raw_iid]
             train_src.append([uid, iid])
 
-    for raw_uid, item_seq in all_item_seqs['tgt'].items():
-        if raw_uid in [id_mapping['src']['id2user'][i] for i in all_users["valid_cold_users"]]:
+    valid_cold_raw_users = {id_mapping['src']['id2user'][uid] for uid in all_users['valid_cold_users']}
+    test_cold_raw_users = {id_mapping['src']['id2user'][uid] for uid in all_users['test_cold_users']}
+    for raw_uid in sorted(all_item_seqs['tgt']):
+        item_seq = all_item_seqs['tgt'][raw_uid]
+        if raw_uid in valid_cold_raw_users:
             uid = id_mapping['src']['user2id'][raw_uid]
             for raw_iid in item_seq:
                 iid = id_mapping['tgt']['item2id'][raw_iid]
                 valid_cold_tgt.append([uid, iid])
-        elif raw_uid in [id_mapping['src']['id2user'][i] for i in all_users["test_cold_users"]]:
+        elif raw_uid in test_cold_raw_users:
             uid = id_mapping['src']['user2id'][raw_uid]
             for raw_iid in item_seq:
                 iid = id_mapping['tgt']['item2id'][raw_iid]
@@ -275,6 +291,7 @@ def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
             num_test = max(1, int(seq_len * config['warm_test_ratio']))
             num_valid = max(1, int(seq_len * config['warm_valid_ratio']))
             num_train = seq_len - num_valid - num_test
+            assert num_train > 0
             for raw_iid in item_seq[:num_train]:
                 train_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
             for raw_iid in item_seq[num_train:num_train + num_valid]:
