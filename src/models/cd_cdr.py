@@ -1,18 +1,16 @@
 import torch
-import torch.nn as nn
-from common.abstract_recommender import GeneralRecommender
+from torch import nn
 import torch.nn.functional as F
-from torch.nn.init import xavier_normal_, constant_, normal_
 import numpy as np
+import pandas as pd
 import math
+from common.abstract_recommender import GeneralRecommender
+from torch.nn.init import xavier_normal_, constant_, normal_
+from common.loss import BPRLoss
 
-def diffusion_initialization(module):
-    r"""using `xavier_normal_`_ in PyTorch to initialize the parameters in
-    nn.Linear layers. For bias in nn.Linear layers, using constant 0 to initialize.
-    Use normal_ for embeddings.
-    """
+def xavier_normal_initialization(module):
     if isinstance(module, nn.Embedding):
-        normal_(module.weight.data, 0, 1)
+        xavier_normal_(module.weight.data)
     elif isinstance(module, nn.Linear):
         xavier_normal_(module.weight.data)
         if module.bias is not None:
@@ -24,11 +22,13 @@ def extract(a, t, x_shape):
     out = a.gather(-1, t.cpu())
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
 
+
 ## Edit from DreamRec
 def linear_beta_schedule(timesteps, beta_start, beta_end):
     beta_start = beta_start
     beta_end = beta_end
     return torch.linspace(beta_start, beta_end, timesteps)
+
 
 ## Edit from DreamRec
 def cosine_beta_schedule(timesteps, s=0.008):
@@ -39,11 +39,13 @@ def cosine_beta_schedule(timesteps, s=0.008):
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0.0001, 0.9999)
 
+
 ## Edit from DreamRec
 def exp_beta_schedule(timesteps, beta_min=0.1, beta_max=10):
     x = torch.linspace(1, 2 * timesteps + 1, timesteps)
     betas = 1 - torch.exp(- beta_min / timesteps - x * 0.5 * (beta_max - beta_min) / (timesteps * timesteps))
     return betas
+
 
 ## Edit from DreamRec
 def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
@@ -64,6 +66,13 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
         betas.append(min(1 - alpha_bar(t2) / alpha_bar(t1), max_beta))
     return np.array(betas)
 
+def gather_indexes(output, gather_index):
+    """Gathers the vectors at the specific positions over a minibatch"""
+    gather_index = gather_index.view(-1, 1, 1).expand(-1, -1, output.shape[-1])
+    output_tensor = output.gather(dim=1, index=gather_index)
+    return output_tensor.squeeze(1)
+
+
 ## Edit from DreamRec
 class SinusoidalPositionEmbeddings(nn.Module):
     def __init__(self, dim):
@@ -79,32 +88,122 @@ class SinusoidalPositionEmbeddings(nn.Module):
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
 
+
 class CD_CDR(GeneralRecommender):
     def __init__(self, config, dataloader):
-        super().__init__(config, dataloader)
+        super(CD_CDR, self).__init__(config, dataloader)
 
-        self.feature_dim = config["feature_dim"]
-        self.dropout = config["dropout"]
-        self.loss_type = config["loss_type"].lower()
-        self.history_len = config.get("history_len", 50)
-        self.loss_type = config["loss_type"]
-        self.timesteps = config['timestep']
-        # self.linespace = 100
-        self.linespace = max(self.timesteps // 20, 1)
-        self.w = config['uncon_w']
-        self.p = config['uncon_p']
-        self.beta_sche = config['beta_sche']
+        # load parameters info
+        self.embedding_size = config["embedding_size"]
+        # self.margin = config["margin"]
+        # self.negative_weight = config["negative_weight"]
+        self.gamma = config["gamma"]
+        self.neg_seq_len = config['neg_seq_len']
+        self.aggregator = config["aggregator"]
+        self.loss_n = config["loss_n"]
+        if self.aggregator not in ["mean", "user_attention", "self_attention", "transformer"]:
+            raise ValueError(
+                "aggregator must be mean, user_attention, self_attention or transformer"
+            )
+        self.n_heads = config["n_heads"]
+        if self.aggregator == "transformer":
+            self.dropout_prob = config["dropout"]
+            self.transformer_layer = nn.TransformerEncoderLayer(
+                d_model=self.embedding_size,
+                nhead=self.n_heads,
+                # dim_feedforward=self.embedding_size * 4,
+                dim_feedforward=self.embedding_size,
+                dropout=self.dropout_prob,
+                activation='gelu',
+                batch_first=True
+            )
+
+        self.total_num_users = self.num_users_src + self.num_users_tgt - self.num_users_overlap
+        self.user_embedding = nn.Embedding(self.total_num_users + 1, self.embedding_size, padding_idx=0)
+        self.item_emb_src = nn.Embedding(self.num_items_src + 1, self.embedding_size, padding_idx=0)
+        self.item_emb_tgt = nn.Embedding(self.num_items_tgt + 1, self.embedding_size, padding_idx=0)
+        ## Edit from DreamRec
+        self.none_embedding = nn.Embedding(
+            num_embeddings=1,
+            embedding_dim=self.embedding_size,
+        )
+
+        # Domain condition generator
+        self.domain_emb = nn.Embedding(2, embedding_dim=self.embedding_size)
+        self.domain_attn = nn.MultiheadAttention(
+            embed_dim=self.embedding_size,
+            num_heads=self.n_heads,
+            batch_first=True
+        )
+        self.gate_proj = nn.Linear(2 * self.embedding_size, 1)
+        nn.init.constant_(self.gate_proj.bias, 0.0)
+
+        # feature space mapping matrix of user and item
+        self.UI_map = nn.Linear(self.embedding_size, self.embedding_size, bias=False, )
+        if self.aggregator in ["user_attention", "self_attention"]:
+            self.W_k = nn.Sequential(
+                nn.Linear(self.embedding_size, self.embedding_size), nn.Tanh()
+            )
+            if self.aggregator == "self_attention":
+                self.W_q = nn.Linear(self.embedding_size, 1, bias=False)
+        elif self.aggregator == "transformer":
+            self.transformer_encoder = nn.TransformerEncoder(
+                encoder_layer=self.transformer_layer,
+                num_layers=config["n_layers"]
+            )
+            self.UI_map = nn.Identity()
+            self.mean_pooling = config["mean_pooling"]
+
+        self.sigmoid = nn.Sigmoid()
+        self.bprloss = BPRLoss()
+        self.bceloss = nn.BCELoss()
+        self.mseloss = nn.MSELoss()
+
+        ## Edit from DreamRec
+        self.diffuser_type = config["diffuser_type"]
+        self.timesteps = config['timestep']  # 200, diffusion steps
+        self.linespace = 100
+        self.w = config['uncon_w']  # 2, the weight of conditioned diffusion in inference phase
+        self.p = config['uncon_p']  # 0.1, how much prob does train phase use unconditioned diffusion
+        self.beta_sche = config['beta_sche']  # exp, the schedule of beta sequence
+        self.dropout = config['dropout']
+        self.emb_dropout = nn.Dropout(self.dropout)
+        layer_norm = config['layer_norm']
+        if layer_norm:
+            self.ln_1 = nn.LayerNorm(self.embedding_size)
+            self.ln_2 = nn.LayerNorm(self.embedding_size)
+        else:
+            self.ln_1 = nn.Identity()
+            self.ln_2 = nn.Identity()
+        # TimestepEmbedder slightly difference
+        self.step_mlp = nn.Sequential(  # time vector mlp
+            SinusoidalPositionEmbeddings(256),
+            nn.Linear(256, self.embedding_size),
+            nn.GELU(),
+            nn.Linear(self.embedding_size, self.embedding_size),
+        )
+        if self.diffuser_type == 'mlp1':
+            self.diffu_mlp = nn.Sequential(  # diffusion mlp, in: x,c,t; out: x
+                nn.Linear(self.embedding_size * 3, self.embedding_size)
+            )
+        elif self.diffuser_type == 'mlp2':
+            self.diffu_mlp = nn.Sequential(
+                nn.Linear(self.embedding_size * 3, self.embedding_size * 2),
+                nn.GELU(),
+                nn.Linear(self.embedding_size * 2, self.embedding_size)
+            )
         self.beta_start = 0.0001
         self.beta_end = 0.02
         if self.beta_sche == 'linear':
-            self.betas = linear_beta_schedule(timesteps=self.timesteps, beta_start=self.beta_start, beta_end=self.beta_end)
+            self.betas = linear_beta_schedule(timesteps=self.timesteps, beta_start=self.beta_start,
+                                              beta_end=self.beta_end)
         elif self.beta_sche == 'exp':
             self.betas = exp_beta_schedule(timesteps=self.timesteps)
-        elif self.beta_sche =='cosine':
+        elif self.beta_sche == 'cosine':
             self.betas = cosine_beta_schedule(timesteps=self.timesteps)
-        elif self.beta_sche =='sqrt':
-            self.betas = torch.tensor(betas_for_alpha_bar(self.timesteps, lambda t: 1-np.sqrt(t + 0.0001),)).float()
-        # define alphas
+        elif self.beta_sche == 'sqrt':
+            self.betas = torch.tensor(betas_for_alpha_bar(self.timesteps, lambda t: 1 - np.sqrt(t + 0.0001), )).float()
+        # define alphas 
         self.alphas = 1. - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, axis=0)
         self.alphas_cumprod_prev = F.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
@@ -116,82 +215,31 @@ class CD_CDR(GeneralRecommender):
         self.sqrt_recipm1_alphas_cumprod = torch.sqrt(1. / self.alphas_cumprod - 1)
         # calculations for posterior q(x_{t-1} | x_t, x_0)
         self.posterior_mean_coef1 = self.betas * torch.sqrt(self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
-        self.posterior_mean_coef2 = (1. - self.alphas_cumprod_prev) * torch.sqrt(self.alphas) / (1. - self.alphas_cumprod)
+        self.posterior_mean_coef2 = (1. - self.alphas_cumprod_prev) * torch.sqrt(self.alphas) / (
+                    1. - self.alphas_cumprod)
         self.posterior_variance = self.betas * (1. - self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
-        # DDIM Reverse Process
-        indices = list(range(0, self.timesteps+1, self.linespace)) # [0,100,...,2000]
+
+        # DDIM Reverse Process, edit from alphafuse
+        indices = list(range(0, self.timesteps + 1, self.linespace))  # [0,100,...,2000]
         self.sub_timesteps = len(indices)
-        indices_now = [indices[i]-1 for i in range(len(indices))]
+        indices_now = [indices[i] - 1 for i in range(len(indices))]
         indices_now[0] = 0
         self.alphas_cumprod_ddim = self.alphas_cumprod[indices_now]
         self.alphas_cumprod_ddim_prev = F.pad(self.alphas_cumprod_ddim[:-1], (1, 0), value=1.0)
         self.sqrt_recipm1_alphas_cumprod_ddim = torch.sqrt(1. / self.alphas_cumprod_ddim - 1)
-        self.posterior_ddim_coef1 = torch.sqrt(self.alphas_cumprod_ddim_prev) - torch.sqrt(1.-self.alphas_cumprod_ddim_prev)/ self.sqrt_recipm1_alphas_cumprod_ddim
-        self.posterior_ddim_coef2 = torch.sqrt(1.-self.alphas_cumprod_ddim_prev) / torch.sqrt(1. - self.alphas_cumprod_ddim)
-        self.diffuser_type = config["diffuser_type"]
+        self.posterior_ddim_coef1 = torch.sqrt(self.alphas_cumprod_ddim_prev) - torch.sqrt(
+            1. - self.alphas_cumprod_ddim_prev) / self.sqrt_recipm1_alphas_cumprod_ddim
+        self.posterior_ddim_coef2 = torch.sqrt(1. - self.alphas_cumprod_ddim_prev) / torch.sqrt(
+            1. - self.alphas_cumprod_ddim)
 
+        self.history_items_src, self.history_len_src, self.history_items_tgt, self.history_len_tgt = self._build_history(
+            config, dataloader)
+        self.apply(xavier_normal_initialization)
+        self.user_embedding.weight.data[0, :] = 0
+        self.item_emb_src.weight.data[0, :] = 0
+        self.item_emb_tgt.weight.data[0, :] = 0
 
-        self.item_embedding_src = nn.Embedding(self.num_items_src + 1, self.feature_dim, padding_idx=0)
-        self.item_embedding_tgt = nn.Embedding(self.num_items_tgt + 1, self.feature_dim, padding_idx=0)
-        self.W_k = nn.Sequential(
-            nn.Linear(self.feature_dim, self.feature_dim), nn.Tanh()
-        )
-
-        self.W_q = nn.Linear(self.feature_dim, 1, bias=False)
-
-        layer_norm = config['layer_norm']
-        if layer_norm:
-            self.ln_1 = nn.LayerNorm(self.feature_dim)
-            self.ln_2 = nn.LayerNorm(self.feature_dim)
-        else:
-            self.ln_1 = nn.Identity()
-            self.ln_2 = nn.Identity()
-
-        self.UI_map = nn.Linear(self.feature_dim, self.feature_dim, bias=False)
-
-        self.gate_proj = nn.Linear(2 * self.feature_dim, self.feature_dim)
-        nn.init.constant_(self.gate_proj.bias, 0.0)
-
-        self.n_heads = config["n_heads"]
-        self.domain_emb = nn.Embedding(2, embedding_dim=self.feature_dim)
-        self.domain_attn = nn.MultiheadAttention(
-            embed_dim=self.feature_dim,
-            num_heads=self.n_heads,
-            batch_first=True
-        )
-
-        self.none_embedding = nn.Embedding(
-            num_embeddings=1,
-            embedding_dim=self.feature_dim,
-        )
-
-        #TimestepEmbedder slightly difference
-        self.step_mlp = nn.Sequential( # time vector mlp
-            SinusoidalPositionEmbeddings(256),
-            nn.Linear(256, self.feature_dim),
-            nn.GELU(),
-            nn.Linear(self.feature_dim, self.feature_dim),
-        )
-
-        if self.diffuser_type =='mlp1':
-            self.diffu_mlp = nn.Sequential( # diffusion mlp, in: x,c,t; out: x
-                nn.Linear(self.feature_dim*3, self.feature_dim)
-        )
-        elif self.diffuser_type =='mlp2':
-            self.diffu_mlp = nn.Sequential(
-            nn.Linear(self.feature_dim * 3, self.feature_dim*2),
-            nn.GELU(),
-            nn.Linear(self.feature_dim*2, self.feature_dim)
-        )
-
-
-
-        self._build_history(dataloader)
-        self.apply(diffusion_initialization)
-        self.item_embedding_tgt.weight.data[0, :] = 0
-        self.item_embedding_src.weight.data[0, :] = 0
-
-    def _build_history(self, dataloader):
+    def _build_history(self, config, dataloader):
         """
         Build fixed-length user interaction history matrices.
         - history_len is a constant hyper-parameter
@@ -199,7 +247,7 @@ class CD_CDR(GeneralRecommender):
         - If the number of interactions < history_len: pad with 0
         """
         device = self.device
-        max_len = self.history_len
+        max_len = config['history_len']
 
         H_src = torch.zeros((self.num_users_src + 1, max_len), dtype=torch.long, device=device)
         L_src = torch.zeros(self.num_users_src + 1, dtype=torch.long, device=device)
@@ -238,11 +286,7 @@ class CD_CDR(GeneralRecommender):
                 sampled = torch.tensor(items, dtype=torch.long, device=device)
                 H_tgt[u, :n] = sampled
                 L_tgt[u] = n
-
-        self.history_items_src = H_src
-        self.history_len_src = L_src
-        self.history_items_tgt = H_tgt
-        self.history_len_tgt = L_tgt
+        return H_src, L_src, H_tgt, L_tgt
 
     def _remove_pos_from_history(self, pos_item, history_item, history_len):
         pos_item_expanded = pos_item.unsqueeze(1)
@@ -252,46 +296,44 @@ class CD_CDR(GeneralRecommender):
         filtered_history_item = history_item * mask.long()
         return filtered_history_item, updated_history_len
 
-    def get_user_representation(self, history_item, history_len, domain):
+    def _to_total_user_id(self, user_id, domain):
         if domain == 0:
-            history_item_e = self.item_embedding_src(history_item)
-        else:
-            history_item_e = self.item_embedding_tgt(history_item)
-        UI_aggregation_e = self.get_UI_aggregation(history_item_e, history_len)
-        return UI_aggregation_e
+            return user_id
+        u = user_id.clone()
+        mask = u > self.num_users_overlap
+        u[mask] = (u[mask] - self.num_users_overlap) + self.num_users_src
+        return u
 
-    def get_UI_aggregation(self, history_item_e, history_len):
-        mask = (torch.abs(history_item_e).sum(dim=-1) > 1e-8).int()
-        history_item_e = self.ln_1(history_item_e)  # [user_num, max_history_len, embedding_size]
-        key = self.W_k(history_item_e)
-        attention = self.W_q(key).squeeze(2)
-        attention_stable = attention - attention.max(dim=1, keepdim=True).values
-        e_attention = torch.exp(attention_stable)
-        e_attention = e_attention * mask
-
-        attention_weight = e_attention / (e_attention.sum(dim=1, keepdim=True) + 1.0e-10)
-        out = torch.matmul(attention_weight.unsqueeze(1), history_item_e).squeeze(1)
-        out = self.UI_map(out)
-        UI_aggregation_e = out
-        # UI_aggregation_e = self.ln_2(UI_aggregation_e)
-        return UI_aggregation_e
-
-    def domain_condition_generator(self, UI_aggregation_e, domain):
-        if 1:
-            Q = self.domain_emb(domain).unsqueeze(1)  # [B, 1, D]
-            K = V = UI_aggregation_e.unsqueeze(1)  # [B, 1, D]
-            output, _ = self.domain_attn(Q, K, V)  # [B, 1, D]
-        return output.squeeze(1)  # [B, D]
-
-    def q_sample(self, x_start, t, noise=None):
+    ## Edit from DreamRec
+    def q_sample(self, x_start, t, noise=None):  # add noise to x_start according to a series of timestamp t
+        # print(self.betas)
         if noise is None:
             noise = torch.randn_like(x_start)
-            #noise = torch.randn_like(x_start) / 100
+            # noise = torch.randn_like(x_start) / 100
         sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, x_start.shape)
         sqrt_one_minus_alphas_cumprod_t = extract(
             self.sqrt_one_minus_alphas_cumprod, t, x_start.shape
         )
         return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
+
+    ## Edit from DreamRec
+    @torch.no_grad()
+    def p_sample(self, model_forward, model_forward_uncon, x, h, t,
+                 t_index):  # inference one step: denoising from x generating x_start
+        x_start = (1 + self.w) * model_forward(x, h, t) - self.w * model_forward_uncon(x, t)
+        x_t = x
+        model_mean = (
+                extract(self.posterior_mean_coef1, t, x_t.shape) * x_start +
+                extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
+        )
+
+        if t_index == 0:
+            return model_mean
+        else:
+            posterior_variance_t = extract(self.posterior_variance, t, x.shape)
+            noise = torch.randn_like(x)
+
+            return model_mean + torch.sqrt(posterior_variance_t) * noise
 
     @torch.no_grad()
     def i_sample(self, model_forward, model_forward_uncon, x, h, t, t_index):
@@ -307,6 +349,119 @@ class CD_CDR(GeneralRecommender):
 
         return model_mean
 
+    @torch.no_grad()
+    def sample_from_noise(self, model_forward, model_forward_uncon, h):
+
+        x = torch.randn_like(h)
+
+        # for n in reversed(range(0, self.timesteps, self.linespace)):
+        for n in reversed(range(self.sub_timesteps)):
+            step = torch.full((h.shape[0],), n * self.linespace, device=h.device, dtype=torch.long)
+            x = self.i_sample(model_forward, model_forward_uncon, x, h, step, n)
+
+        return x
+
+    ## Edit from DreamRec
+    def denoise_step(self, x, h, step):
+        t = self.step_mlp(step)
+        res = self.diffu_mlp(torch.cat((x, h, t), dim=1))
+        return res
+
+    def denoise_uncon(self, x, step):
+        h = self.none_embedding(torch.tensor([0], device=self.device))
+        h = torch.cat([h.view(1, self.embedding_size)] * x.shape[0], dim=0)
+
+        t = self.step_mlp(step)
+
+        res = self.diffu_mlp(torch.cat((x, h, t), dim=1))
+        return res
+
+    def get_user_representation(self, user, history_item, history_len, user_domain, item_domain):
+        if item_domain == 0:
+            history_item_e = self.item_emb_src(history_item)  # [B, L, D]
+        else:
+            history_item_e = self.item_emb_tgt(history_item)  # [B, L, D]
+        user_total = self._to_total_user_id(user, user_domain)  # [B]
+        user_e = self.user_embedding(user_total)  # [B, D]
+        UI_aggregation_e = self.get_UI_aggregation(user_e, history_item_e, history_len)
+        return UI_aggregation_e
+
+    def get_UI_aggregation(self, user_e, history_item_e, history_len):
+        r"""Get the combined vector of user and historically interacted items
+
+        Args:
+            user_e (torch.Tensor): User's feature vector, shape: [user_num, embedding_size]
+            history_item_e (torch.Tensor): History item's feature vector,
+                shape: [user_num, max_history_len, embedding_size]
+            history_len (torch.Tensor): User's history length, shape: [user_num]
+
+        Returns:
+            torch.Tensor: Combined vector of user and item sequences, shape: [user_num, embedding_size]
+        """
+        if self.aggregator == "mean":
+            pos_item_sum = history_item_e.sum(dim=1)
+            # [user_num, embedding_size]
+            out = pos_item_sum / (history_len + 1.e-10).unsqueeze(1)
+        elif self.aggregator in ["user_attention", "self_attention"]:
+            mask = (torch.abs(history_item_e).sum(dim=-1) > 1e-8).int()
+            history_item_e = self.ln_1(history_item_e)  # [user_num, max_history_len, embedding_size]
+            key = self.W_k(history_item_e)
+            if self.aggregator == "user_attention":
+                attention = torch.matmul(key, user_e.unsqueeze(2)).squeeze(2)  # [user_num, max_history_len]
+            elif self.aggregator == "self_attention":
+                attention = self.W_q(key).squeeze(2)
+            attention_stable = attention - attention.max(dim=1, keepdim=True).values
+            e_attention = torch.exp(attention_stable)
+            e_attention = e_attention * mask
+
+            attention_weight = e_attention / (e_attention.sum(dim=1, keepdim=True) + 1.0e-10)
+            out = torch.matmul(attention_weight.unsqueeze(1), history_item_e).squeeze(1)
+            # out = self.ln_2(out)
+        elif self.aggregator == "transformer":
+            mask = torch.abs(history_item_e).sum(dim=-1) < 1e-8
+            fully_padded = mask.all(dim=1)
+            mask[fully_padded, 0] = False
+            transformer_input = history_item_e
+            transformer_input = self.ln_1(transformer_input)
+            transformer_input = self.emb_dropout(transformer_input)
+            transformer_output = self.transformer_encoder(
+                transformer_input,
+                src_key_padding_mask=mask
+            )
+            if self.mean_pooling:
+                mask = ~mask.unsqueeze(-1)  # [B, L, 1]
+                masked_output = transformer_output * mask.float()
+                sum_output = masked_output.sum(dim=1)
+                valid_length = history_len.unsqueeze(1).float()
+                out = sum_output / (valid_length + 1e-10)
+            else:
+                last_valid_pos = (mask.size(1) - 1) - mask.flip(dims=[1]).int().argmin(dim=1)  # [batch_size]
+                last_valid_pos[mask.all(dim=1)] = 0
+                out = gather_indexes(transformer_output, last_valid_pos)
+        # Combined vector of user and item sequences
+        out = self.UI_map(out)
+        UI_aggregation_e = self.gamma * user_e + (1 - self.gamma) * out
+        # UI_aggregation_e = self.ln_2(UI_aggregation_e)
+        return UI_aggregation_e
+
+    def run_diffusion_process(self, target_item_emb, condition_emb):
+        """
+        Args:
+            target_item_emb: x_start, [B, D]
+            condition_emb: h (condition), [B, D]
+
+        Returns:
+            x_start: [B, D]
+            predicted_x: [B, D]
+        """
+        B = target_item_emb.shape[0]
+        n = torch.randint(0, self.timesteps, (B,), device=self.device).long()  # [B]
+        noise = torch.randn_like(target_item_emb)  # [B, D]
+        x_noisy = self.q_sample(x_start=target_item_emb, t=n, noise=noise)  # [B, D]
+        h = self.add_uncon(condition_emb)  # [B, D]
+        predicted_x = self.denoise_step(x=x_noisy, h=h, step=n)  # [B, D]
+        return target_item_emb, predicted_x
+
     def add_uncon(self, h):
         B, D = h.shape[0], h.shape[1]
         mask1d = (torch.sign(torch.rand(B) - self.p) + 1) / 2
@@ -314,64 +469,54 @@ class CD_CDR(GeneralRecommender):
         mask = torch.cat([maske1d] * D, dim=1)
         mask = mask.to(self.device)
 
-        # print(h.device, self.none_embedding(torch.tensor([0]).to(self.device)).device, mask.device)
-        h = h * mask + self.none_embedding(torch.tensor([0], device = self.device)) * (1-mask)
+        h = h * mask + self.none_embedding(torch.tensor([0], device=self.device)) * (1 - mask)
         return h
 
-    ## Edit from DreamRec
-    # DreamRec_backbone forward
-    def denoise_step(self, x, h, step):
-        t = self.step_mlp(step)
-        res = self.diffu_mlp(torch.cat((x, h, t), dim=1))
-        return res
+    def domain_condition_generator(self, s_UI_aggregation_e, t_UI_aggregation_e, domain):
+        """
+        domain embedding as Q, UI_aggregation_e as K=V
 
-    # DreamRec_backbone forward_uncon
-    def denoise_uncon(self, x, step): # with out condition
-        h = self.none_embedding(torch.tensor([0], device = self.device))
-        h = torch.cat([h.view(1, self.feature_dim)]*x.shape[0], dim=0)
+        Args:
+            s_UI_aggregation_e: [B, D]
+            t_UI_aggregation_e: [B, D]
+            domain: scalar (e.g. 0 or 1)
 
-        t = self.step_mlp(step)
+        Returns:
+            [B, D]
+        """
 
-        res = self.diffu_mlp(torch.cat((x, h, t), dim=1))
-        return res
+        if 1:
+            UI_aggregation_e = t_UI_aggregation_e if domain == 1 else s_UI_aggregation_e
+            return UI_aggregation_e
+        else:
+            gate_input = torch.cat([s_UI_aggregation_e, t_UI_aggregation_e], dim=-1)
+            gate = torch.sigmoid(self.gate_proj(gate_input))  # [B, D] 或 [B, 1]
+            UI_aggregation_e = gate * s_UI_aggregation_e + (1 - gate) * t_UI_aggregation_e  # [B, D]
 
-    # DreamRec_backbone sample_from_noise
-    @torch.no_grad()
-    def sample_from_noise(self, model_forward, model_forward_uncon, h):
-
-        x = torch.randn_like(h)
-
-        #for n in reversed(range(0, self.timesteps, self.linespace)):
-        for n in reversed(range(self.sub_timesteps)):
-            step = torch.full((h.shape[0], ), n*self.linespace, device=h.device, dtype=torch.long)
-            x = self.i_sample(model_forward, model_forward_uncon, x, h, step, n)
-
-        return x
-
-    def run_diffusion_process(self, target_item_emb, condition_emb):
-        B = target_item_emb.shape[0]
-        n = torch.randint(0, self.timesteps, (B,), device=self.device).long()  # [B]
-        noise = torch.randn_like(target_item_emb)  # [B, D]
-
-        # 加噪
-        x_noisy = self.q_sample(x_start=target_item_emb, t=n, noise=noise)  # [B, D]
-
-        # 条件注入（如 DreamRec 中的 unconditional mixing）
-        h = self.add_uncon(condition_emb)  # [B, D]
-
-        # 去噪预测
-        predicted_x = self.denoise_step(x=x_noisy, h=h, step=n)  # [B, D]
-
-        return target_item_emb, predicted_x
+            domain_idx = (torch.ones([s_UI_aggregation_e.shape[0]],
+                                     device=s_UI_aggregation_e.device) * domain).int()  # [B], e.g., all 0 for source
+            """Q = self.domain_emb(domain_idx).unsqueeze(1)      # [B, 1, D]
+            K = V = UI_aggregation_e.unsqueeze(1)         # [B, 1, D]
+            output, _ = self.domain_attn(Q, K, V)         # [B, 1, D]"""
+            domain_bias = self.domain_emb(domain_idx)  # [B, D]
+            output = UI_aggregation_e + domain_bias
+            return output.squeeze(1)  # [B, D]
 
     def calculate_loss(self, interaction, epoch_idx):
-        users = [interaction["users_src"], interaction["users_tgt"]]
-        pos = [interaction["pos_items_src"], interaction["pos_items_tgt"]]
+        user_id = [interaction["users_src"], interaction["users_tgt"]] # source, target
+        item_id = [interaction["pos_items_src"], interaction["pos_items_tgt"]] # source, target
+        neg_item_id = [interaction["neg_items_src"], interaction["neg_items_tgt"]]
 
         losses = []
-        for domain in [0, 1]:
-            user = users[domain]
-            pos_item = pos[domain]
+        for domain in [0, 1]:  # source, target
+            user = user_id[domain]
+            pos_item = item_id[domain]
+            neg_item = neg_item_id[domain]
+
+            neg_item_seq = neg_item.reshape((self.neg_seq_len, -1)).T  # [B, neg_seq_len]
+            user_number = int(len(user) / self.neg_seq_len)
+            user = user[0:user_number]  # [B]
+            pos_item = pos_item[0:user_number]  # [B]
 
             if domain == 0:
                 s_items = self.history_items_src[user]  # [B, L]
@@ -394,32 +539,42 @@ class CD_CDR(GeneralRecommender):
 
                 t_items, t_len = self._remove_pos_from_history(pos_item, t_items, t_len)
 
-            s_UI_aggregation_e = self.get_user_representation(s_items, s_len, domain=0)  # [B, D]
-            t_UI_aggregation_e = self.get_user_representation(t_items, t_len, domain=1)  # [B, D]
-            pos_item_e = self.item_embedding_src(pos_item) if domain == 0 else self.item_embedding_tgt(pos_item)
+            # Aggregated Domain-Specific Interactions
+            s_UI_aggregation_e = self.get_user_representation(user, s_items, s_len, user_domain=domain, item_domain=0)  # [B, D]
+            t_UI_aggregation_e = self.get_user_representation(user, t_items, t_len, user_domain=domain, item_domain=1)  # [B, D]
+            if domain == 0:
+                pos_item_e = self.item_emb_src(pos_item)  # [B, D]
+            else:
+                pos_item_e = self.item_emb_tgt(pos_item)  # [B, D]
 
             # Domain condition generator
-            gate = torch.sigmoid(self.gate_proj(torch.cat([s_UI_aggregation_e, t_UI_aggregation_e], dim=-1)))
-            UI_aggregation_e = gate * s_UI_aggregation_e + (1 - gate) * t_UI_aggregation_e  # [B, D]
-            domain_idx = torch.full_like(user, domain)  # [B], e.g., all 0 for source
-            UI_aggregation_e = self.domain_condition_generator(UI_aggregation_e, domain_idx)  # [B, D]
+            UI_aggregation_e = self.domain_condition_generator(s_UI_aggregation_e, t_UI_aggregation_e, domain)  # [B, D]
 
-            x_start, predicted_x = self.run_diffusion_process(pos_item_e, UI_aggregation_e)
-            if self.loss_type == 'l1':
-                loss = F.l1_loss(x_start, predicted_x)
-            elif self.loss_type == 'l2':
-                loss = F.mse_loss(x_start, predicted_x)
-            elif self.loss_type == "huber":
-                loss = F.smooth_l1_loss(x_start, predicted_x)
+            if domain == 0:
+                neg_item_seq_e = self.item_emb_src(neg_item_seq)  # [B, neg_seq_len, D]
             else:
-                raise NotImplementedError()
+                neg_item_seq_e = self.item_emb_tgt(neg_item_seq)  # [B, neg_seq_len, D]
+            pos_item_score = torch.mul(UI_aggregation_e.unsqueeze(1), pos_item_e.unsqueeze(1)).sum(dim=2)
+            neg_item_score = torch.mul(UI_aggregation_e.unsqueeze(1), neg_item_seq_e).sum(dim=2)
+
+            if self.loss_n == 'bce':
+                pos_label = torch.ones_like(pos_item_score)
+                neg_label = torch.zeros_like(neg_item_score)
+                loss = self.bceloss(self.sigmoid(pos_item_score), pos_label) + \
+                       self.bceloss(self.sigmoid(neg_item_score), neg_label)
+            elif self.loss_n == 'bpr':
+                loss = self.bprloss(pos_item_score, neg_item_score)
+            elif self.loss_n == 'mse':
+                loss = self.mseloss(UI_aggregation_e, pos_item_e)
+            x_start, predicted_x = self.run_diffusion_process(pos_item_e, UI_aggregation_e)
+            loss += F.mse_loss(x_start, predicted_x)
             losses.append(loss)
+        # return_loss = losses[0]
         return_loss = 0.2 * losses[0] + 0.8 * losses[1]
         return return_loss
 
     def full_sort_predict(self, interaction, is_warm):
         user = interaction[0].long()
-
         if not is_warm:
             s_items = self.history_items_src[user]  # [B, L]
             s_len = self.history_len_src[user]
@@ -436,19 +591,18 @@ class CD_CDR(GeneralRecommender):
             u_src[u_src > self.num_users_overlap] = 0
             s_items = self.history_items_src[u_src]
             s_len = self.history_len_src[u_src]
-        s_UI_aggregation_e = self.get_user_representation(s_items, s_len, domain=0)
-        t_UI_aggregation_e = self.get_user_representation(t_items, t_len, domain=1)
-        gate = torch.sigmoid(self.gate_proj(torch.cat([s_UI_aggregation_e, t_UI_aggregation_e], dim=-1)))
-        UI_aggregation_e = gate * s_UI_aggregation_e + (1 - gate) * t_UI_aggregation_e
-        domain_idx = torch.full_like(user, 1)
-        UI_aggregation_e = self.domain_condition_generator(UI_aggregation_e, domain_idx)
 
-        h = UI_aggregation_e
-        x = self.sample_from_noise(self.denoise_step, self.denoise_uncon, h)
+        user_domain = 1 if is_warm else 0
+        # no need remove pos_item from history because history only contains training interactions
+        s_UI_aggregation_e = self.get_user_representation(user, s_items, s_len, user_domain=user_domain, item_domain=0)  # [B, D]
+        t_UI_aggregation_e = self.get_user_representation(user, t_items, t_len, user_domain=user_domain, item_domain=1)  # [B, D]
+        # Domain condition generator
+        UI_aggregation_e = self.domain_condition_generator(s_UI_aggregation_e, t_UI_aggregation_e, 1)  # [B, D]
 
-        target_all_item_emb = self.item_embedding_tgt.weight
-        II_cos = torch.matmul(x, target_all_item_emb.T)
+        # UI_aggregation_e = t_UI_aggregation_e
+        x = self.sample_from_noise(self.denoise_step, self.denoise_uncon, UI_aggregation_e)
+
+        all_item_emb = self.item_emb_tgt.weight
+        II_cos = torch.matmul(x, all_item_emb.T)
+        II_cos[:, 0] = -1e9
         return II_cos
-
-    def set_train_stage(self, stage_id):
-        super().set_train_stage(stage_id)

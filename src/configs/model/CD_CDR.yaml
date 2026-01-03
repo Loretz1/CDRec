@@ -1,3 +1,12 @@
+# Overwrite Dataset Setting
+only_overlap_users: False
+k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
+shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
+warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
+warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
+t_cold_valid: 0.1 # cold user in the target domain valid set
+t_cold_test: 0.1 # cold user in the target domain test set
+
 # 1. Eval Setting
 warm_eval: True  # Whether to enable warm user evaluation
 overlapped_users_for_warm_eval: True # Warm evaluation is performed only after filtering users that exist in both domains (overlapped users).
@@ -12,26 +21,35 @@ training_stages:
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.001, 0.01]
+    learning_rate: [0.0001]
     learning_rate_scheduler: [1.0, 50]
-    weight_decay: 1e-6
+    weight_decay: 1e-7
 
 # 3. Fixed Model Parameters
-feature_dim: 64
-dropout: 0.1
-loss_type: l2
-history_len: 50
-layer_norm: 1
-n_heads : 1
-timestep: 100
-beta_sche: linear
-uncon_w: 2
-uncon_p: 0.1
+embedding_size: 512
+neg_seq_len: 1
 diffuser_type: mlp1
-stopping_step: 200
+timestep: 2000                    # 200, diffusion steps
+uncon_w: 5                    # 2, the weight of conditioned diffusion in inference phase
+uncon_p: 0.1                    # 0.1, how much prob does train phase use unconditioned diffusion
+beta_sche: linear                  # exp, the schedule of beta sequence
+dropout: 0.1
+layer_norm: 1                   # if using layer norm
+#transformer
+n_heads: 4
+n_layers: 1
+mean_pooling: 0                # if using mean pooling, 0: no, 1: yes
+loss_n: bpr                   # bce, bpr, mse, ccl
+log_model_suffix: source_code_logic
 
 # 4. Model Hyperparameter Grid Search Setting
+gamma: [0.1,0.5,0.999]
+aggregator: ["mean", "user_attention", "self_attention", "transformer"]
+history_len: [10,20]
 
 # hyperparameter search space
 hyper_parameters:
   - training_stages.0.learning_rate
+  - gamma
+  - history_len
+  - aggregator
