@@ -29,16 +29,19 @@ class Config(object):
         file_list.append(os.path.join(cur_dir, "dataset", "{}.yaml".format(config_dict['dataset'])))
         file_list.append(os.path.join(cur_dir, "model", "{}.yaml".format(config_dict['model'])))
 
-        hyper_parameters = []
+        hyper_parameters, modalities = [], []
         for file in file_list:
             if os.path.isfile(file):
                 with open(file, 'r', encoding='utf-8') as f:
                     fdata = yaml.load(f.read(), Loader=self._build_yaml_loader())
                     if fdata.get('hyper_parameters'):
                         hyper_parameters.extend(fdata['hyper_parameters'])
+                    if fdata.get('modalities'):
+                        modalities.extend(fdata['modalities'])
                     file_config_dict.update(fdata)
 
         file_config_dict['hyper_parameters'] = hyper_parameters
+        file_config_dict['modalities'] = modalities
         return file_config_dict
 
     def _build_yaml_loader(self):
