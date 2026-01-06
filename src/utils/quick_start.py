@@ -9,10 +9,11 @@ from utils.utils import init_seed, get_model, get_trainer, dict2str, metrics_dic
 from utils.enum_type import TrainDataLoaderState
 import platform
 import os
+import torch.utils.tensorboard as tb
 
 def quick_start(model, dataset, domains, save_model=True):
     config = Config(model, dataset, domains)
-    init_logger(config)
+    logfilename = init_logger(config)
     logger = getLogger()
     # print config infor
     logger.info('██Server: \t' + platform.node())
@@ -78,6 +79,9 @@ def quick_start(model, dataset, domains, save_model=True):
         model = get_model(config['model'])(config, train_data).to(config['device'])
         logger.info(model)
 
+        tbdir = f"runs/{logfilename[0]}-{logfilename[1]}-{logfilename[2]}-{logfilename[3]}-{config['hyper_parameters']}={hyper_tuple}" # tb ablation study要改名字
+        writer = tb.SummaryWriter(log_dir=tbdir) # tb
+
         # trainer loading and initialization
         trainer = get_trainer()(config, model)
 
@@ -94,7 +98,7 @@ def quick_start(model, dataset, domains, save_model=True):
             # model training
             (best_valid_score_warm, best_valid_result_warm, best_test_upon_valid_warm,
              best_valid_score_cold, best_valid_result_cold, best_test_upon_valid_cold) \
-                = trainer.fit(i, train_data, valid_data=valid_data, test_data=test_data, saved=save_model)
+                = trainer.fit(i, train_data, valid_data=valid_data, test_data=test_data, saved=save_model, writer=writer)
 
             if not eval:
                 continue
@@ -174,4 +178,4 @@ def quick_start(model, dataset, domains, save_model=True):
         logger.info("\n🏆 Cold Evaluation: Disabled or No Record")
 
     logger.info("\n" + "=" * 100 + "\n")
-
+    writer.close()  # tb

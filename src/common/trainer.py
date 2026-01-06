@@ -113,7 +113,7 @@ class Trainer(AbstractTrainer):
         scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=fac)
         return scheduler
 
-    def _train_epoch(self, train_data, epoch_idx, loss_func=None):
+    def _train_epoch(self, train_data, epoch_idx, loss_func=None, writer=None):
         """
         功能：
             执行一个 epoch 的模型训练，遍历训练数据并完成前向、反向与参数更新。
@@ -302,7 +302,7 @@ class Trainer(AbstractTrainer):
             assert (user_src, pos_items_src) in review0 and (interaction['neg_items_src'][i] not in train_data.dataset.positive_items_src[interaction['users_src'][i].item()])
             assert (user_tgt, pos_items_tgt) in review1 and (interaction['neg_items_tgt'][i] not in train_data.dataset.positive_items_tgt[interaction['users_tgt'][i].item()])
 
-    def fit(self, stage_id, train_data, valid_data=None, test_data=None, saved=False, verbose=True):
+    def fit(self, stage_id, train_data, valid_data=None, test_data=None, saved=False, verbose=True, writer=None):
         """
         功能：
             在指定训练阶段（stage）下执行模型训练，
@@ -352,11 +352,12 @@ class Trainer(AbstractTrainer):
             若未开启评估（self.eval == False），返回：
                 (None, None, None, None, None, None)
         """
+        train_time_total = 0
         for epoch_idx in range(self.start_epoch, self.epochs):
             # train
             training_start_time = time()
             self.model.pre_epoch_processing()
-            train_loss, _ = self._train_epoch(train_data, epoch_idx)
+            train_loss, _ = self._train_epoch(train_data, epoch_idx, writer=writer)
             if torch.is_tensor(train_loss):
                 # get nan loss
                 break
@@ -366,6 +367,8 @@ class Trainer(AbstractTrainer):
 
             self.train_loss_dict[(stage_id, epoch_idx)] = sum(train_loss) if isinstance(train_loss, tuple) else train_loss
             training_end_time = time()
+            train_time_total += training_end_time - training_start_time
+            writer.add_scalar(f"Stage{stage_id} training Loss", self.train_loss_dict[(stage_id, epoch_idx)], epoch_idx)  # tb
             train_loss_output = \
                 self._generate_train_loss_output(stage_id, epoch_idx, training_start_time, training_end_time, train_loss)
             post_info = self.model.post_epoch_processing()
@@ -397,7 +400,11 @@ class Trainer(AbstractTrainer):
                                                           stop_flag_warm, stop_flag_cold,
                                                           valid_end_time - valid_start_time)
                 # test
-                _, test_result_warm, _, test_result_cold = self._valid_epoch(test_data)
+                test_score_warm, test_result_warm, test_score_cold, test_result_cold = self._valid_epoch(test_data)
+                if test_score_warm is not None:
+                    writer.add_scalar("Warm testing acc:", test_score_warm, epoch_idx)  # tb
+                if test_score_cold is not None:
+                    writer.add_scalar("Cold testing acc:", test_score_cold, epoch_idx)  # tb
                 test_output = self._generate_eval_output(epoch_idx, "Test",
                                                          test_result_warm, test_result_cold)
                 if verbose:
@@ -417,6 +424,8 @@ class Trainer(AbstractTrainer):
                     self.best_test_upon_valid_cold = test_result_cold
 
                 if stop_flag_warm and stop_flag_cold:
+                    self.logger.info("train time total %.2fs, train time average: %.2fs"
+                                     % (train_time_total,train_time_total / (epoch_idx + 1)))
                     stop_msg = f"+++++ Finished training at epoch {epoch_idx}, best eval results:"
                     if verbose:
                         self.logger.info(stop_msg)

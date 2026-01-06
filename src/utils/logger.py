@@ -9,11 +9,13 @@ def init_logger(config):
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
-    domains_str = '+'.join(config['domains'])
     model_name = config['model']
     if 'log_model_suffix' in config and config['log_model_suffix']:
         model_name = f"{model_name}_{config['log_model_suffix']}"
-    logfilename = '{}-{}-{}-{}.log'.format(model_name, config['dataset'], domains_str, get_local_time())
+    dataset_str = config['dataset']
+    domains_str = '+'.join(config['domains'])
+    time = get_local_time()
+    logfilename = '{}-{}-{}-{}.log'.format(model_name, dataset_str, domains_str, time)
 
     logfilepath = os.path.join(LOGROOT, logfilename)
 
@@ -51,4 +53,5 @@ def init_logger(config):
         handlers = [sh, fh]
     )
 
+    return (model_name, dataset_str, domains_str, time)
 
