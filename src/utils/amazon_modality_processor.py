@@ -25,7 +25,7 @@ class AmazonModalityProcessor:
                 line = line.replace(b'true', b'True').replace(b'false', b'False')
                 yield eval(line)
 
-    def _load_raw(self, reviews_path, metadata_path, item2id):
+    def _load_raw(self, reviews_path, metadata_path, id_mapping):
         reviews = {}
         metadata = {}
         for inter in tqdm(self._parse_gz(reviews_path)):
@@ -33,7 +33,7 @@ class AmazonModalityProcessor:
             item = inter['asin']
             text = inter['reviewText']
             reviews[(user, item)] = text
-        item_asins = set(item2id.keys())
+        item_asins = set(id_mapping['src']['item2id'].keys()) | set(id_mapping['tgt']['item2id'].keys())
         for info in tqdm(self._parse_gz(metadata_path)):
             if info['asin'] not in item_asins:
                 continue
@@ -76,12 +76,12 @@ class AmazonModalityProcessor:
                                         'reviews_' + self.domain + "_5.json.gz")
             metadata_path = os.path.join(self.config['data_path'], self.config['dataset'], self.domain, 'raw',
                                          'meta_' + self.domain + ".json.gz")
-            self.reviews, self.metadata = self._load_raw(reviews_path, metadata_path, self.id_mapping['item2id'])
+            self.reviews, self.metadata = self._load_raw(reviews_path, metadata_path, self.id_mapping)
 
         func_name = f"extract_{modality['name']}_modality_data"
         handler = self._get_modality_handler(func_name)
         logger.info(f'[DATASET] Extracting meta: {modality["name"]}...')
-        modality_data = handler(self.config, modality, self.interaction, self.id_mapping, self.reviews, self.metadata)
+        modality_data = handler(self.config, modality, self.domain_role, self.interaction, self.id_mapping, self.reviews, self.metadata)
         logger.info(f'[DATASET] Saving modality data: {modality["name"]}..')
         with open(modality_data_path, 'w') as f:
             json.dump(modality_data, f)
@@ -98,7 +98,7 @@ class AmazonModalityProcessor:
         func_name = f"generate_{modality['name']}_embs"
         handler = self._get_modality_handler(func_name)
         logger.info(f'[DATASET] Generatinng embs: {modality["name"]}...')
-        embs = handler(self.config, modality, self.interaction, self.id_mapping, modality_data)
+        embs = handler(self.config, modality, self.domain_role, self.interaction, self.id_mapping, modality_data)
         logger.info(f'[DATASET] Saving embs: {modality["name"]}..')
         np.save(embs_path, embs)
         return embs
@@ -114,7 +114,7 @@ class AmazonModalityProcessor:
         func_name = f"generate_{modality['name']}_final_embs"
         handler = self._get_modality_handler(func_name)
         logger.info(f'[DATASET] Generatinng final embs: {modality["name"]}...')
-        final_embs = handler(self.config, modality, self.interaction, self.id_mapping, embs)
+        final_embs = handler(self.config, modality, self.domain_role, self.interaction, self.id_mapping, embs)
         logger.info(f'[DATASET] Saving final embs: {modality["name"]}..')
         np.save(final_embs_path, final_embs)
         return final_embs
@@ -195,7 +195,7 @@ class AmazonModalityProcessor:
             )
             return False
 
-    def extract_sentence_modality_data(self, config, modality, interaction, id_mapping, reviews, metadata):
+    def extract_sentence_modality_data(self, config, modality, role, interaction, id_mapping, reviews, metadata):
         def clean_text(raw_text: str) -> str:
             import re
             import html
@@ -233,6 +233,8 @@ class AmazonModalityProcessor:
 
         item2meta = {}
         for item, meta in metadata.items():
+            if item not in id_mapping[role]['item2id'].keys():
+                continue
             meta_sentence = ''
             keys = set(meta.keys())
             features_needed = ['title', 'price', 'brand', 'feature', 'categories', 'description']
@@ -242,10 +244,10 @@ class AmazonModalityProcessor:
             item2meta[item] = meta_sentence
         return item2meta
 
-    def generate_sentence_embs(self, config, modality, interaction, id_mapping, modality_data):
+    def generate_sentence_embs(self, config, modality, role, interaction, id_mapping, modality_data):
         meta_sentences = []
-        for i in range(1, len(id_mapping['id2item'])):
-            item = id_mapping['id2item'][i]
+        for i in range(1, len(id_mapping[role]['id2item'])):
+            item = id_mapping[role]['id2item'][i]
             meta_sentences.append(modality_data[item])
 
         if 'sentence-transformers' in modality['emb_model']:
@@ -320,7 +322,7 @@ class AmazonModalityProcessor:
 
         return sent_embs
 
-    def generate_sentence_final_embs(self, config, modality, interaction, id_mapping, embs):
+    def generate_sentence_final_embs(self, config, modality, role, interaction, id_mapping, embs):
         if modality['emb_pca'] == modality['emb_dim']:
             pca_embs = embs
         elif modality['emb_pca'] < modality['emb_dim']:

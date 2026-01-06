@@ -22,6 +22,16 @@ class DiffCDR(GeneralRecommender):
 
         self.diff_model = DiffModel(config['diff_steps'], config['diff_dim'], config['emb_dim'], config['diff_scale'], config['diff_sample_steps'],
                                   config['diff_task_lambda'], config['diff_mask_rate'])
+        # self.mapper = MLPMapper(self.emb_dim)
+        # self.map_align_loss = config['map_align_loss']
+        # if self.map_align_loss in ["l1", "smooth_l1"]:
+        #     self.align_loss_fn = F.smooth_l1_loss
+        # elif self.map_align_loss in ["l2", "mse"]:
+        #     self.align_loss_fn = F.mse_loss
+        # else:
+        #     raise ValueError(f"Unknown map_align_loss: {self.map_align_loss}")
+
+        self.apply(xavier_uniform_initialization)
 
     def _bpr(self, u, p, n):
         pos = (u * p).sum(dim=-1)
@@ -50,6 +60,19 @@ class DiffCDR(GeneralRecommender):
         pos_tgt = inter['pos_items_tgt']
         neg_tgt = inter['neg_items_tgt']
 
+        # without_diffusion
+        # src_emb = self.source_user_embedding(users)
+        # tgt_emb = self.target_user_embedding(users).detach()
+        # pred_tgt = self.mapper(src_emb)
+        # loss_align = self.align_loss_fn(pred_tgt, tgt_emb)
+        # pos_item = self.target_item_embedding(pos_tgt)
+        # neg_item = self.target_item_embedding(neg_tgt)
+        # pos_score = (pred_tgt * pos_item).sum(dim=-1)
+        # neg_score = (pred_tgt * neg_item).sum(dim=-1)
+        # loss_bpr = self.bpr_loss(pos_score, neg_score)
+        # return loss_align + self.config['map_bpr_lambda'] * loss_bpr
+        # return loss_bpr
+
         # self.optimizer.zero_grad()
         tgt_emb = self.target_user_embedding(users)
         cond_emb = self.source_user_embedding(users)
@@ -61,10 +84,10 @@ class DiffCDR(GeneralRecommender):
         #     clip_grad_norm_(self.parameters(), **self.config['training_stages'][2]['clip_grad_norm'])
         # self.optimizer.step()
 
-        tgt_emb = self.target_user_embedding(users)
-        cond_emb = self.source_user_embedding(users)
-        iid_pos_emb = self.target_item_embedding(pos_tgt)
-        iid_neg_emb = self.target_item_embedding(neg_tgt)
+        # tgt_emb = self.target_user_embedding(users)
+        # cond_emb = self.source_user_embedding(users)
+        # iid_pos_emb = self.target_item_embedding(pos_tgt)
+        # iid_neg_emb = self.target_item_embedding(neg_tgt)
         loss_task = diffusion_loss_fn(self.diff_model, tgt_emb, cond_emb,iid_pos_emb, iid_neg_emb, self.device, is_task=True)
         # return loss_task
 
@@ -84,6 +107,13 @@ class DiffCDR(GeneralRecommender):
         user = interaction[0].long()
         all_items = self.target_item_embedding.weight
 
+        # without_diffusion
+        # src_emb = self.source_user_embedding(user)
+        # trans_emb = self.mapper(src_emb)
+        # scores = torch.matmul(trans_emb, all_items.T)
+        # scores[:, 0] = -1e9
+        # return scores
+
         cond_emb = self.source_user_embedding(user)
         trans_emb = p_sample_loop(self.diff_model, cond_emb, self.device)
 
@@ -98,7 +128,10 @@ class DiffCDR(GeneralRecommender):
         for m in [
             self.source_user_embedding, self.source_item_embedding,
             self.target_user_embedding, self.target_item_embedding,
+            # without_diffusion
             self.diff_model]:
+            # self.mapper]:
+            # without_diffusion
             self._set_requires_grad(m, False)
 
         if stage_id == 0:  # source
@@ -108,7 +141,10 @@ class DiffCDR(GeneralRecommender):
             self._set_requires_grad(self.target_user_embedding, True)
             self._set_requires_grad(self.target_item_embedding, True)
         elif stage_id == 2:  # mapping
+            # without_diffusion
+            # self._set_requires_grad(self.mapper, True)
             self._set_requires_grad(self.diff_model, True)
+            # without_diffusion
             # two_step_optimizing
             # self.optimizer = self._build_optimizer(params=filter(lambda p: p.requires_grad, self.parameters()))
             # two_step_optimizing
@@ -924,3 +960,19 @@ class DPM_Solver:
                         device) * timesteps[i + 1]
                     x = self.dpm_solver_update(x, vec_s, vec_t, order)
         return x
+
+
+class MLPMapper(nn.Module):
+    def __init__(self, emb_dim, hidden_dims=(128, 128)):
+        super().__init__()
+        layers = []
+        in_dim = emb_dim
+        for h in hidden_dims:
+            layers.append(nn.Linear(in_dim, h))
+            layers.append(nn.ReLU())
+            in_dim = h
+        layers.append(nn.Linear(in_dim, emb_dim))
+        self.mlp = nn.Sequential(*layers)
+
+    def forward(self, src_user_emb):
+        return self.mlp(src_user_emb)

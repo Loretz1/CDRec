@@ -9,7 +9,7 @@ cold_start_eval: True # Whether to enable cold start user evaluation
 training_stages:
   - name: source_training
     state: SOURCE
-    epochs: [30]
+    epochs: [10]
     train_batch_size: 2048
     learner: adam
     learning_rate: 0.01
@@ -17,7 +17,7 @@ training_stages:
     weight_decay: 0.0
   - name: target_training
     state: TARGET
-    epochs: [30]
+    epochs: [10]
     train_batch_size: 2048
     learner: adam
     learning_rate: 0.01
@@ -28,28 +28,31 @@ training_stages:
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.001, 0.01]
+    learning_rate: [0.001]
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
     clip_grad_norm: {"max_norm": 1.0}
 
 # 3. Fixed Model Parameters Setting
+emb_dim: 64
 diff_steps: 1000
 diff_dim: 128
 diff_sample_steps: 30
 diff_mask_rate: 0.1
-log_model_suffix: two_step_optimizing
+#log_model_suffix: without_diffusion
 
 # 4. Model Hyperparameter Grid Search Setting
-emb_dim: [10,64]
 diff_task_lambda: [0.01, 0.1, 1, 2, 4, 8]
 diff_scale: [0.05, 0.1, 0.2, 0.5, 1, 2, 5]
+#map_align_loss: ['l1', 'l2']
+#map_bpr_lambda: [0.01, 0.1, 1, 2, 4, 8]
 
 # hyperparameter search space
 hyper_parameters:
-  - emb_dim
   - training_stages.0.epochs
   - training_stages.1.epochs
   - training_stages.2.learning_rate
   - diff_task_lambda
   - diff_scale
+#  - map_align_loss
+#  - map_bpr_lambda

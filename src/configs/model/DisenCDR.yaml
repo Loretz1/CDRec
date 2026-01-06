@@ -10,7 +10,7 @@ training_stages:
   - name: overlap_training
     state: OVERLAP
     epochs: 1000
-    train_batch_size: 1024
+    train_batch_size: 2048
     learner: adam
     learning_rate: [ 0.01, 0.001, 0.0001]
     learning_rate_scheduler: [1.0, 50]
@@ -18,8 +18,8 @@ training_stages:
 #    clip_grad_norm: {"max_norm": 1.0}
 
 # 3. Fixed Model Parameters Setting
-feature_dim: 128
-hidden_dim: 128
+feature_dim: 64
+hidden_dim: 64
 leakey: 0.1
 user_batch_size: 64
 bce: False

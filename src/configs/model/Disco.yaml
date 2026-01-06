@@ -10,9 +10,9 @@ training_stages:
   - name: both_training
     state: BOTH
     epochs: 1000
-    train_batch_size: 1024
+    train_batch_size: 2048
     learner: adam
-    learning_rate: [0.0001, 0.001, 0.01]
+    learning_rate: [0.001, 0.01]
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
 

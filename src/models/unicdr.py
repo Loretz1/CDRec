@@ -87,6 +87,7 @@ class UniCDR(GeneralRecommender):
         out_items[~scatter_mask] = 0
         out_scores[~scatter_mask] = -100.0
         return out_items, out_scores
+        return items, scores
 
     def batch_build_global(self, users: torch.Tensor, cur_domain: str, ):
         B = users.size(0)
@@ -115,6 +116,41 @@ class UniCDR(GeneralRecommender):
                     items, scores = self.batch_random_mask(items, scores, self.config["mask_rate"])
                 global_item[overlap_mask, 0, :] = items
                 global_score[overlap_mask, 0, :] = scores
+
+        # without domain masking
+        # if cur_domain == "src":
+        #     src_items = self.history_items_src[users]
+        #     src_scores = self.history_scores_src[users]
+        #     if mask_other:
+        #         m_items, m_scores = self.batch_random_mask(src_items, src_scores, self.config["mask_rate"])
+        #         src_items, src_scores = m_items, m_scores
+        #     global_item[:, 0, :] = src_items
+        #     global_score[:, 0, :] = src_scores
+        #     if overlap_mask.any():
+        #         u = users[overlap_mask]
+        #         tgt_items = self.history_items_tgt[u]
+        #         tgt_scores = self.history_scores_tgt[u]
+        #         if mask_other:
+        #             tgt_items, tgt_scores = self.batch_random_mask(tgt_items, tgt_scores, self.config["mask_rate"])
+        #         global_item[overlap_mask, 1, :] = tgt_items
+        #         global_score[overlap_mask, 1, :] = tgt_scores
+        # else:
+        #     tgt_items = self.history_items_tgt[users]
+        #     tgt_scores = self.history_scores_tgt[users]
+        #     if mask_other:
+        #         m_items, m_scores = self.batch_random_mask(tgt_items, tgt_scores, self.config["mask_rate"])
+        #         tgt_items, tgt_scores = m_items, m_scores
+        #     global_item[:, 1, :] = tgt_items
+        #     global_score[:, 1, :] = tgt_scores
+        #     if overlap_mask.any():
+        #         u = users[overlap_mask]
+        #         src_items = self.history_items_src[u]
+        #         src_scores = self.history_scores_src[u]
+        #         if mask_other:
+        #             src_items, src_scores = self.batch_random_mask(src_items, src_scores, self.config["mask_rate"])
+        #         global_item[overlap_mask, 0, :] = src_items
+        #         global_score[overlap_mask, 0, :] = src_scores
+        # without domain masking
         return global_item, global_score
 
     def getLossContrastive(self, specific_user, share_user, domain_id):
@@ -158,7 +194,9 @@ class UniCDR(GeneralRecommender):
         share_user_src = self.agg_list[-1](global_user_emb_src, global_item_emb_src, global_score_src)
         share_user_src = F.dropout(share_user_src, self.dropout, training=self.training)
 
+        # without_contrastive_loss
         loss_cont_src = self.getLossContrastive(specific_user_src, share_user_src, domain_id = 0)
+        # without_contrastive_loss
         user_src_emb = specific_user_src + share_user_src
 
         # tgt user
@@ -179,7 +217,9 @@ class UniCDR(GeneralRecommender):
         share_user_tgt = self.agg_list[-1](global_user_emb_tgt, global_item_emb_tgt, global_score_tgt)
         share_user_tgt = F.dropout(share_user_tgt, self.dropout, training=self.training)
 
+        # without_contrastive_loss
         loss_cont_tgt = self.getLossContrastive(specific_user_tgt, share_user_tgt, domain_id=1)
+        # without_contrastive_loss
         user_tgt_emb = specific_user_tgt + share_user_tgt
 
         # src item
@@ -202,8 +242,11 @@ class UniCDR(GeneralRecommender):
         loss_bpr_src = -torch.log(torch.sigmoid(scores_pos_src - scores_neg_src) + 1e-12).mean()
         loss_bpr_tgt = -torch.log(torch.sigmoid(scores_pos_tgt - scores_neg_tgt) + 1e-12).mean()
 
+        # without_contrastive_loss
         loss = (self.config["lambda_loss"] * (loss_bpr_src + loss_bpr_tgt)
                 + (1 - self.config["lambda_loss"]) * (loss_cont_src + loss_cont_tgt))
+        # loss = self.config["lambda_loss"] * (loss_bpr_src + loss_bpr_tgt)
+        # without_contrastive_loss
 
         return loss
 

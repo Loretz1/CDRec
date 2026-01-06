@@ -192,6 +192,19 @@ class CD_CDR(GeneralRecommender):
                 nn.GELU(),
                 nn.Linear(self.embedding_size * 2, self.embedding_size)
             )
+        # without_diffusion & diff2mlp
+        # for p in self.diffu_mlp.parameters():
+        #     p.requires_grad = False
+        # for p in self.step_mlp.parameters():
+        #     p.requires_grad = False
+        # without_diffusion & diff2mlp
+        # diff2mlp
+        # self.mlp_generator = nn.Sequential(
+        #     nn.Linear(self.embedding_size, self.embedding_size * 2),
+        #     nn.GELU(),
+        #     nn.Linear(self.embedding_size * 2, self.embedding_size)
+        # )
+        # diff2mlp
         self.beta_start = 0.0001
         self.beta_end = 0.02
         if self.beta_sche == 'linear':
@@ -566,8 +579,14 @@ class CD_CDR(GeneralRecommender):
                 loss = self.bprloss(pos_item_score, neg_item_score)
             elif self.loss_n == 'mse':
                 loss = self.mseloss(UI_aggregation_e, pos_item_e)
+            # without_diffusion & diff2mlp
             x_start, predicted_x = self.run_diffusion_process(pos_item_e, UI_aggregation_e)
             loss += F.mse_loss(x_start, predicted_x)
+            # without_diffusion & diff2mlp
+            # diff2mlp
+            # pred_item_e = self.mlp_generator(UI_aggregation_e)
+            # loss += F.mse_loss(pred_item_e, pos_item_e)
+            # diff2mlp
             losses.append(loss)
         # return_loss = losses[0]
         return_loss = 0.2 * losses[0] + 0.8 * losses[1]
@@ -599,9 +618,11 @@ class CD_CDR(GeneralRecommender):
         # Domain condition generator
         UI_aggregation_e = self.domain_condition_generator(s_UI_aggregation_e, t_UI_aggregation_e, 1)  # [B, D]
 
-        # UI_aggregation_e = t_UI_aggregation_e
+        # without_diffusion & diff2mlp
         x = self.sample_from_noise(self.denoise_step, self.denoise_uncon, UI_aggregation_e)
-
+        # x = UI_aggregation_e
+        # x = self.mlp_generator(UI_aggregation_e)
+        # without_diffusion & diff2mlp
         all_item_emb = self.item_emb_tgt.weight
         II_cos = torch.matmul(x, all_item_emb.T)
         II_cos[:, 0] = -1e9

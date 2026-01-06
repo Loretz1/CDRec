@@ -19,6 +19,8 @@ class Base(GeneralRecommender):
         self.target_item_embedding = nn.Embedding(self.num_items_tgt + 1, self.feature_dim, padding_idx=0)
 
         def make_mlp(in_dim, hidden_dim, layers):
+            if layers == 0:
+                return nn.Identity()
             mlp = []
             last_dim = in_dim
             for _ in range(layers):

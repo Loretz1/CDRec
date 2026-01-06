@@ -9,7 +9,7 @@ cold_start_eval: True # Whether to enable cold start user evaluation
 training_stages:
   - name: source_training
     state: SOURCE
-    epochs: [20,60,80]
+    epochs: [10]
     train_batch_size: 2048
     learner: adam
     learning_rate: 0.01
@@ -17,7 +17,7 @@ training_stages:
     weight_decay: 0.0
   - name: target_training
     state: TARGET
-    epochs: [20,60,80]
+    epochs: [10]
     train_batch_size: 2048
     learner: adam
     learning_rate: 0.01
@@ -28,7 +28,7 @@ training_stages:
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.005, 0.01]
+    learning_rate: [0.001, 0.01]
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
 
@@ -38,7 +38,7 @@ mlp_hidden_dim: 128
 dropout: 0.2
 loss_type: bpr
 # 4. Model Hyperparameter Grid Search Setting
-mlp_layers: [2,0]
+mlp_layers: [0]
 
 # hyperparameter search space
 hyper_parameters:

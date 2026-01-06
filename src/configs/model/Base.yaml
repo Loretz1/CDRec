@@ -12,7 +12,7 @@ training_stages:
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.01, 0.001]
+    learning_rate: [0.001, 0.01]
     learning_rate_scheduler: [ 1.0, 50 ]
     weight_decay: 0.0
 #    clip_grad_norm: {"max_norm": 1.0}
@@ -20,9 +20,9 @@ training_stages:
 # 3. Fixed Model Parameters Setting
 loss_type: bpr
 dropout: 0.2
-mlp_layers: 2
-feature_dim: 128
+feature_dim: 64
 mlp_hidden_dim: 128
+mlp_layers: 0
 
 # 4. Model Hyperparameter Grid Search Setting
 

@@ -21,12 +21,12 @@ training_stages:
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.0001, 0.001, 0.01]
+    learning_rate: [0.001, 0.01]
     learning_rate_scheduler: [1.0, 50]
     weight_decay: 0.000001
 
 # 3. Fixed Model Parameters Setting
-feature_dim: 128
+feature_dim: 64
 dropout: 0.3
 lambda_a: 0.5
 # 4. Model Hyperparameter Grid Search Setting
@@ -34,6 +34,8 @@ history_len: [ 10, 20 ,40 ]
 aggregator: [ 'mean' , 'user_attention']
 mask_rate: [ 0.2, 0.4 ]
 lambda_loss: [ 0.2, 0.5, 0.8 ]
+#lambda_loss: [ 1 ]
+log_model_suffix: warm
 
 # hyperparameter search space
 hyper_parameters:

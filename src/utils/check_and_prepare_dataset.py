@@ -347,16 +347,16 @@ def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, join
             联合数据集存储路径
     """
     domain_role_map = {
-        domains[0]: {
-            "role": "src",
-            "id_mapping": id_mapping["src"],
-            "train_df": train_src,
-        },
-        domains[1]: {
-            "role": "tgt",
-            "id_mapping": id_mapping["tgt"],
-            "train_df": train_tgt,
-        }
+        domains[0]: {"role": "src"},
+        domains[1]: {"role": "tgt"},
+    }
+    all_id_mapping = {
+        "src": id_mapping["src"],
+        "tgt": id_mapping["tgt"],
+    }
+    all_train_df = {
+        "src": train_src,
+        "tgt": train_tgt,
     }
 
     with ThreadPoolExecutor(max_workers=len(domains)) as executor:
@@ -369,8 +369,8 @@ def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, join
                 config=config,
                 domain=domain,
                 role=info["role"],
-                id_mapping=info["id_mapping"],
-                train_df=info["train_df"],
+                id_mapping=all_id_mapping,
+                train_df=all_train_df,
                 joint_path=joint_path,
             )
 

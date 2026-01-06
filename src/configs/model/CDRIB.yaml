@@ -18,15 +18,14 @@ training_stages:
 #    clip_grad_norm: {"max_norm": 1.0}
 
 # 3. Fixed Model Parameters Setting
-feature_dim: 128
-hidden_dim: 128
+feature_dim: 64
+hidden_dim: 64
 GNN: 3
 leakey: 0.1
 user_batch_size: 64
 bce: False
 margin: 0.3
 #log_model_suffix: without_contrastive
-#stopping_step: 100
 
 # 4. Model Hyperparameter Grid Search Setting
 dropout: [0.2, 0.3]
