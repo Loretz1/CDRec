@@ -1,3 +1,12 @@
+三种配置文件：
+1. 全局配置文件overall.yaml：配置默认设置，优先级最低
+2. 数据集配置文件：dataset/<dataset_name>.yaml：配置数据集设置，优先级中
+3. 模型配置文件： model/<model_name>.yaml：模型设置：优先级最高
+
+优先级更高的文件，会覆盖优先级低的文件配置的同名字段（除了hyper_parameters、modalities），
+hyper_parameters、modalities这两个字段会append到已有的List中，不会覆盖。
+数据集配置文件、模型配置文件的README文件在子文件夹中
+
 # overall.yaml
 - 功能：配置全局参数
 - 需要包含：

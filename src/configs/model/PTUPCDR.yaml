@@ -46,7 +46,7 @@ feature_dim: 64
 meta_dim: 128
 # 4. Model Hyperparameter Grid Search Setting
 #history_len: [10, 20, 40]
-history_len: [60, 80, 100]
+history_len: [10, 20, 40, 60, 80, 100]
 
 # hyperparameter search space
 hyper_parameters:
