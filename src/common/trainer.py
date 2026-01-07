@@ -303,56 +303,8 @@ class Trainer(AbstractTrainer):
             assert (user_tgt, pos_items_tgt) in review1 and (interaction['neg_items_tgt'][i] not in train_data.dataset.positive_items_tgt[interaction['users_tgt'][i].item()])
 
     def fit(self, stage_id, train_data, valid_data=None, test_data=None, saved=False, verbose=True, writer=None):
-        """
-        功能：
-            在指定训练阶段（stage）下执行模型训练，
-            并按配置周期性进行验证与测试评估。
-
-        训练流程：
-            - 对每个 epoch：
-                1) 调用 model.pre_epoch_processing()
-                2) 调用 _train_epoch() 执行一轮训练
-                3) 更新学习率调度器
-                4) 记录并输出训练损失
-                5) 调用 model.post_epoch_processing()
-
-            - 若目前stage是最后一个stage，则评估（self.eval == True），需要对模型进行eval和早停判断：
-                * 每隔 eval_step 个 epoch：
-                    - 在 valid_data 上执行验证评估
-                    - 基于指定指标执行 early stopping（warm / cold 分别判断）
-                    - 在 test_data 上执行测试评估
-                    - 记录在验证集最优时对应的测试结果
-                * 当 warm 与 cold 均触发 early stopping 时，提前终止训练
-
-        输入：
-            stage_id: int
-                当前训练阶段编号（用于多阶段训练）
-            train_data: TrainDataLoader
-                训练数据加载器
-            valid_data: EvalDataLoader, optional
-                验证数据加载器
-            test_data: EvalDataLoader, optional
-                测试数据加载器
-            saved: bool
-                是否保存模型（当前实现中未使用）
-            verbose: bool
-                是否打印训练与评估日志
-
-        输出：
-            Tuple:
-                (
-                    best_valid_score_warm,
-                    best_valid_result_warm,
-                    best_test_upon_valid_warm,
-                    best_valid_score_cold,
-                    best_valid_result_cold,
-                    best_test_upon_valid_cold
-                )
-
-            若未开启评估（self.eval == False），返回：
-                (None, None, None, None, None, None)
-        """
-        train_time_total = 0
+        stage_train_time_total = 0
+        stop_epoch = 0
         for epoch_idx in range(self.start_epoch, self.epochs):
             # train
             training_start_time = time()
@@ -367,7 +319,8 @@ class Trainer(AbstractTrainer):
 
             self.train_loss_dict[(stage_id, epoch_idx)] = sum(train_loss) if isinstance(train_loss, tuple) else train_loss
             training_end_time = time()
-            train_time_total += training_end_time - training_start_time
+            stage_train_time_total += training_end_time - training_start_time
+            stop_epoch = epoch_idx
             writer.add_scalar(f"Stage{stage_id} training Loss", self.train_loss_dict[(stage_id, epoch_idx)], epoch_idx)  # tb
             train_loss_output = \
                 self._generate_train_loss_output(stage_id, epoch_idx, training_start_time, training_end_time, train_loss)
@@ -424,8 +377,6 @@ class Trainer(AbstractTrainer):
                     self.best_test_upon_valid_cold = test_result_cold
 
                 if stop_flag_warm and stop_flag_cold:
-                    self.logger.info("train time total %.2fs, train time average: %.2fs"
-                                     % (train_time_total,train_time_total / (epoch_idx + 1)))
                     stop_msg = f"+++++ Finished training at epoch {epoch_idx}, best eval results:"
                     if verbose:
                         self.logger.info(stop_msg)
@@ -444,9 +395,9 @@ class Trainer(AbstractTrainer):
                     break
 
         if not self.eval:
-            return (None, None, None, None, None, None)
+            return (None, None, None, None, None, None), (stage_train_time_total, stop_epoch)
         return (self.best_valid_score_warm, self.best_valid_result_warm, self.best_test_upon_valid_warm,
-                self.best_valid_score_cold, self.best_valid_result_cold, self.best_test_upon_valid_cold)
+                self.best_valid_score_cold, self.best_valid_result_cold, self.best_test_upon_valid_cold), (stage_train_time_total, stop_epoch)
 
     @torch.no_grad()
     def evaluate(self, eval_data, is_test=False, idx=0):

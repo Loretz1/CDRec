@@ -288,8 +288,8 @@ def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
         elif raw_uid in id_mapping['tgt']['user2id']:
             uid = id_mapping['tgt']['user2id'][raw_uid]
             seq_len = len(item_seq)
-            num_test = max(1, int(seq_len * config['warm_test_ratio']))
-            num_valid = max(1, int(seq_len * config['warm_valid_ratio']))
+            num_test = max(1, int(seq_len * config['warm_test_ratio'])) if config['warm_test_ratio'] else 0
+            num_valid = max(1, int(seq_len * config['warm_valid_ratio'])) if config['warm_valid_ratio'] else 0
             num_train = seq_len - num_valid - num_test
             assert num_train > 0
             for raw_iid in item_seq[:num_train]:
