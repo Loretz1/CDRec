@@ -1,3 +1,12 @@
+# Overwrite Dataset Setting
+only_overlap_users: True
+k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
+shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
+warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
+warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
+t_cold_valid: 0 # cold user in the target domain valid set
+t_cold_test: 0 # cold user in the target domain test set
+
 # 1. Eval Setting
 warm_eval: True  # Whether to enable warm user evaluation
 overlapped_users_for_warm_eval: True # Warm evaluation is performed only after filtering users that exist in both domains (overlapped users).
