@@ -375,7 +375,9 @@ class Trainer(AbstractTrainer):
                         self.logger.info(update_output_cold)
                     self.best_valid_result_cold = valid_result_cold
                     self.best_test_upon_valid_cold = test_result_cold
-
+                # 早停的逻辑是两个域都Over了才结束。
+                # 如果一个域不设置eval，比如Yaml里面warm_eval=false或者cold_start_eval=false，
+                # 那就只看一个域的，因为不评价的域flag=true
                 if stop_flag_warm and stop_flag_cold:
                     stop_msg = f"+++++ Finished training at epoch {epoch_idx}, best eval results:"
                     if verbose:
@@ -503,34 +505,6 @@ class Trainer(AbstractTrainer):
             plt.savefig(save_path)
 
     def set_train_stage(self, stage_id, stage_config, eval = False):
-        """
-        功能：
-            设置并初始化指定训练阶段（stage）的训练配置，
-            包括模型状态、优化器和学习率调度器。
-
-        处理逻辑：
-            - 从 stage_config 中读取并设置训练相关参数：
-                * self.epochs
-                * self.learner
-                * self.learning_rate
-                * self.learning_rate_scheduler
-                * self.weight_decay
-                * self.clip_grad_norm
-            - 调用 model.set_train_stage(stage_id)，
-              将模型切换到对应训练阶段
-            - 基于当前模型参数构建优化器（_build_optimizer），优化requires_grad的参数
-            - 构建学习率调度器（_build_lr_scheduler）
-            - 设置是否在该阶段启用评估（self.eval）
-
-        输入：
-            stage_id: int
-                当前训练阶段编号
-            stage_config: dict
-                当前训练阶段的配置参数
-            eval: bool
-                是否在该训练阶段启用验证 / 测试评估
-
-        """
         train_keys = ["epochs", "learner", "learning_rate", "learning_rate_scheduler", "weight_decay", "clip_grad_norm"]
 
         for key in train_keys:
@@ -538,7 +512,7 @@ class Trainer(AbstractTrainer):
             if key in stage_config:
                 setattr(self, key, stage_config[key])
 
-        self.model.set_train_stage(stage_id)
+        self.model.set_train_stage(stage_id) # 调用模型set_train_stage方法，让模型可以冻结参数，或者保存之前阶段的结果
         self.optimizer = self._build_optimizer(params=filter(lambda p: p.requires_grad, self.model.parameters()))
         self.lr_scheduler = self._build_lr_scheduler()
         self.eval = eval

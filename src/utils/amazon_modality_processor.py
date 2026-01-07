@@ -120,61 +120,6 @@ class AmazonModalityProcessor:
         return final_embs
 
     def run_full_pipeline(self):
-        """
-        功能：
-            为指定 domain（src 或 tgt）构建并保存模态 embedding。
-        主要流程：
-            - 遍历配置中启用的 modalities
-            - 每个模态依次执行：
-                1. _create_modality_data
-                   → 最终调用：
-                     extract_{name}_modality_data(...)
-                   → 负责抽取并组织模态的原始结构化数据
-                   → 输出文件：
-                     {joint_path}/modality_emb_{role}/{name}_metadata.json
-                2. _create_embs
-                   → 最终调用：
-                     generate_{name}_embs(...)
-                   → 负责将模态数据编码为原始 embedding
-                   → 输出文件：
-                     {joint_path}/modality_emb_{role}/{name}_{model}_{dim}.npy
-                3. _create_final_embs
-                   → 最终调用：
-                     generate_{name}_final_embs(...)
-                   → 负责对 embedding 进行后处理（如 PCA）
-                   → 输出文件：
-                     {joint_path}/modality_emb_{role}/{name}_final_emb_{pca}.npy
-            - 方法来源与优先级：
-                - 上述最终调用的 extract_* / generate_* 方法有两个可能来源：
-                    1) 用户指定的模型文件：models/{model}.py
-                    2) AmazonModalityProcessor 类内部实现
-                - 当模型文件中提供同名方法时，优先使用模型中的实现
-                - 若模型中未提供，则回退使用 AmazonModalityProcessor 内部默认实现
-        文件说明：
-            - {name}_metadata.json
-                * 含义：模态对应的原始结构化数据
-                * 结构：dict
-                    - key   ：实体的原始 ID（如 item ASIN / user ID）
-                    - value ：该实体的模态内容（如文本、属性列表等）
-                * 用途：作为 embedding 生成的输入
-
-            - {name}_{model}_{dim}.npy
-                * 含义：模态的原始 embedding 表示
-                * 结构：np.ndarray, shape = [N, dim]
-                    - N 为参与该模态建模的实体数量
-                * 用途：作为后续 PCA 或其他后处理的输入
-
-            - {name}_final_emb_{pca}.npy
-                * 含义：模态的最终 embedding 表示（后处理后）
-                * 结构：np.ndarray, shape = [N, pca]
-                * 用途：在模型训练 / 推理阶段直接使用
-        说明：
-            - 仅处理配置中 modality['enabled'] == True 的模态
-            - 若最终 embedding 文件已存在，将自动跳过该模态
-            - 模态处理对象由具体 modality 定义，
-              可作用于 item、user 或其他实体
-            - 该方法独立处理 src / tgt 域（由 domain_role 指定）
-        """
         try:
             for id, modality in enumerate(self.config['modalities']):
                 if not modality['enabled']:
@@ -184,8 +129,13 @@ class AmazonModalityProcessor:
                 if os.path.exists(os.path.join(self.joint_path, final_embs_file_name)):
                     continue
 
+                # 三步，每一步生成一个文件
+                # _create_modality_data会在本文件和<model>.py中查找：extract_<name>_modality_data方法，来处理此模态，最后生成一个json文件
+                # 比如这里给出了一个extract_sentence_modality_data例子，<model>.py的优先级高于本文件的同名方法。
                 modality_data = self._create_modality_data(modality)
+                # _create_embs生成一个npy文件，查找：generate_<name>_embs，可以参考：generate_sentence_embs方法
                 embs = self._create_embs(modality, modality_data)
+                # _create_final_embs生成一个npy文件，查找：generate_<name>_final_embs，可以参考：generate_sentence_final_embs方法
                 final_embs = self._create_final_embs(modality, embs)
             return True
         except Exception as e:

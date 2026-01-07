@@ -23,57 +23,7 @@ def load_all_item_seqs(src_processed_dir, tgt_processed_dir):
     return all_item_seqs
 
 def split_users_and_reindex(config, joint_path, all_item_seqs):
-    """
-    功能：
-        对跨域用户进行划分并重新编号（reindex），
-        构建跨域推荐中统一、可对齐的 user / item ID 空间。
-
-    用户划分说明：
-        - overlap_users：
-            同时出现在源域（src）和目标域（tgt）的用户
-        - valid_cold_users / test_cold_users：
-            从 overlap_users 中按比例划分得到，
-            在目标域中作为冷启动用户用于评估
-        - src_only_users：
-            仅出现在源域的用户
-        - tgt_only_users：
-            仅出现在目标域的用户
-    ID 对齐规则：
-        - overlap_users：
-            在 src / tgt 两个域中分配到相同的 user ID 区间
-            [1 .. len(overlap_users)]，
-            表示跨域共享的 warm 用户
-        - src_only_users + valid_cold_users + test_cold_users：
-            仅在源域（src）中存在交互的用户
-            在 src 域中从 len(overlap_users) + 1 开始重新编号
-        - tgt_only_users：
-            仅在目标域（tgt）中存在交互的用户
-            在 tgt 域中从 len(overlap_users) + 1 开始重新编号
-        - item ID 在各自域内独立编号，0 号为 padding
-    说明：
-        - 所有用户分组互斥
-        - 划分结果与 ID 映射会缓存到 joint_path，支持复用
-    输入：
-        config: dict
-            用户划分比例配置
-        joint_path: str
-            联合数据集存储路径
-        all_item_seqs: dict
-            原始 src / tgt 用户交互序列
-    输出：
-        all_users: dict
-            使用新 user ID 的用户分组结果
-        id_mapping: dict
-            src / tgt 域的 user / item ID 映射表
-    """
-    #   - The 5 user groups are mutually exclusive (no overlaps).
-    #   - overlap_users: assigned to the same ID range [1 .. len(overlap_users)] in BOTH src and tgt domains.
-    #                    → These are warm users shared across domains.
-    #   - src_only_users + valid_cold_users + test_cold_users:
-    #                    → These are single-domain users of source domain (only src has interactions).
-    #                    → Reindexed starting from len(overlap_users) + 1 in source domain.
-    #   - tgt_only_users: single-domain users of target domain (only tgt has interactions),
-    #                    → Reindexed starting from len(overlap_users) + 1 in target domain.
+    # 如果存在这两个文件，就不重新生成了，之后的文件也都是这样的，不会重复生成。
     all_users_file_path = os.path.join(joint_path, "all_users.json")
     id_mapping_file_path = os.path.join(joint_path, "id_mapping.json")
     if os.path.exists(all_users_file_path) and os.path.exists(id_mapping_file_path):
@@ -84,9 +34,11 @@ def split_users_and_reindex(config, joint_path, all_item_seqs):
             id_mapping = json.load(f)
         return all_users, id_mapping
 
+    # 源域、目标域所有用户，这里是raw id存的
     users_src = sorted(all_item_seqs['src'].keys())
     users_tgt = sorted(all_item_seqs['tgt'].keys())
 
+    # 按照raw id把用户分成三类：原始重叠用户、src单域用户、tgt单域用户
     users_src_set = set(users_src)
     users_tgt_set = set(users_tgt)
     overlap_users = sorted(users_src_set & users_tgt_set)
@@ -95,6 +47,8 @@ def split_users_and_reindex(config, joint_path, all_item_seqs):
 
     rng = np.random.RandomState(999)
     overlap_list = rng.permutation(overlap_users)
+    # 按照Yaml超参数：t_cold_valid、t_cold_test，按比例把原始重叠用户分成：重叠用户、valid冷用户、test冷用户
+    # 因此就形成了五类用户：重叠用户、valid冷用户、test冷用户 （前面这三类是由原始重叠用户拆开来的）、 src单域用户、tgt单域用户
     num_overlap = len(overlap_list)
     num_valid_cold = int(num_overlap * config['t_cold_valid'])
     num_test_cold = int(num_overlap * config['t_cold_test'])
@@ -103,6 +57,7 @@ def split_users_and_reindex(config, joint_path, all_item_seqs):
     test_cold_users = sorted(overlap_list[num_valid_cold:num_valid_cold + num_test_cold])
     overlap_users = sorted(overlap_list[num_valid_cold + num_test_cold:])
 
+    # 形成了all_users，这里还是raw id存的，后面映射为id后，再存成json
     all_users = {
         'overlap_users': overlap_users,
         'valid_cold_users': valid_cold_users,
@@ -111,25 +66,30 @@ def split_users_and_reindex(config, joint_path, all_item_seqs):
         'tgt_only_users': tgt_only_users
     }
 
+    # 开始给用户、物品编号
     id_mapping = {'src': {'user2id': {}, 'item2id': {}, 'id2user': ['[PAD]'], 'id2item': ['[PAD]']},
                   'tgt': {'user2id': {}, 'item2id': {}, 'id2user': ['[PAD]'], 'id2item': ['[PAD]']}}
+    # 先给重叠用户overlap_users编号，他们在两个域编号相同，且都靠在前面，比如有3128个重叠用户，那么 1-3128。
     for i, u in enumerate(all_users['overlap_users'], start=1):
         id_mapping['src']['user2id'][u] = i
         id_mapping['src']['id2user'].append(u)
         id_mapping['tgt']['user2id'][u] = i
         id_mapping['tgt']['id2user'].append(u)
-    src_extra_users = (
+    src_extra_users = (  #这些是源域的单域用户，给他们接着编号，比如从3129开始编号
             all_users['valid_cold_users']
             + all_users['test_cold_users']
             + all_users['src_only_users']
     )
+    # 源域单域用户（valid_cold_users + test_cold_users + src_only_users）编号，比如从3129开始编号
     for i, u in enumerate(src_extra_users, start=len(all_users['overlap_users']) + 1):
         id_mapping['src']['user2id'][u] = i
         id_mapping['src']['id2user'].append(u)
+    # 目标域单域用户tgt_only_users 编号，比如从3129开始
     for i, u in enumerate(all_users['tgt_only_users'], start=len(all_users['overlap_users']) + 1):
         id_mapping['tgt']['user2id'][u] = i
         id_mapping['tgt']['id2user'].append(u)
 
+    # 物品不重叠，直接分域编一下
     for domain in ['src', 'tgt']:
         all_items = set()
         for items in all_item_seqs[domain].values():
@@ -138,6 +98,7 @@ def split_users_and_reindex(config, joint_path, all_item_seqs):
             id_mapping[domain]['item2id'][item] = len(id_mapping[domain]['id2item'])
             id_mapping[domain]['id2item'].append(item)
 
+    # 把all_user从raw id 映射到 id
     all_users = {
         'overlap_users': [id_mapping['src']['user2id'][u] for u in all_users['overlap_users']],
         'valid_cold_users': [id_mapping['src']['user2id'][u] for u in all_users['valid_cold_users']],
@@ -219,28 +180,6 @@ def to_df(inter):
     return df
 
 def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
-    """
-    功能：
-        将跨域用户交互数据切分为训练、验证和测试集合，
-    切分结果：
-        - 源域（src）：
-            * train_src（全部用于训练）
-        - 目标域（tgt）：
-            * train_tgt        ：warm 用户训练集
-            * valid_warm_tgt   ：warm 用户验证集
-            * test_warm_tgt    ：warm 用户测试集
-            * valid_cold_tgt   ：cold 用户验证集
-            * test_cold_tgt    ：cold 用户测试集
-        以上均为Dataframe结构并存储为文件，包含字段：['user', 'item']
-    说明：
-        - cold 用户（valid_cold / test_cold）：
-            * 从 overlap 用户中按比例划分得到
-            * 在目标域中视为冷启动用户，仅用于目标域评估，不参与目标域训练，保留源域交互
-        - warm 用户：
-            * 指目标域中的其余用户（包含 overlap 中未被选为 cold 的用户以及 tgt-only 用户）
-            * 将每个warm用户的交互按比例划分为 train / valid / test
-        - 所有交互均使用重编号后的 user / item ID
-    """
     train_src_path = os.path.join(joint_path, "train_src.pkl")
     train_tgt_path = os.path.join(joint_path, "train_tgt.pkl")
     valid_cold_tgt_path = os.path.join(joint_path, "valid_cold_tgt.pkl")
@@ -264,6 +203,7 @@ def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
     valid_cold_tgt, test_cold_tgt = [], []
     valid_warm_tgt, test_warm_tgt = [], []
 
+    # 读一下src的所有交互，这些交互不会被分到任何valid/test，所以直接放到train_src里面。
     for raw_uid in sorted(all_item_seqs['src']):
         item_seq = all_item_seqs['src'][raw_uid]
         uid = id_mapping['src']['user2id'][raw_uid]
@@ -271,21 +211,28 @@ def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
             iid = id_mapping['src']['item2id'][raw_iid]
             train_src.append([uid, iid])
 
+    # 读取tgt所有交互，把每一个交互归入train_tgt/valid_cold_tgt/test_cold_tgt/valid_warm_tgt/test_warm_tgt
     valid_cold_raw_users = {id_mapping['src']['id2user'][uid] for uid in all_users['valid_cold_users']}
     test_cold_raw_users = {id_mapping['src']['id2user'][uid] for uid in all_users['test_cold_users']}
     for raw_uid in sorted(all_item_seqs['tgt']):
         item_seq = all_item_seqs['tgt'][raw_uid]
+        # 用户分成四类：overlap_users、valid_cold_users、test_cold_users、tgt_only_users
         if raw_uid in valid_cold_raw_users:
+            # 如果是valid_cold_users，他的交互全部放到valid_cold_tgt
             uid = id_mapping['src']['user2id'][raw_uid]
             for raw_iid in item_seq:
                 iid = id_mapping['tgt']['item2id'][raw_iid]
                 valid_cold_tgt.append([uid, iid])
         elif raw_uid in test_cold_raw_users:
+            # 如果是test_cold_users，他的交互全部放到test_cold_tgt
             uid = id_mapping['src']['user2id'][raw_uid]
             for raw_iid in item_seq:
                 iid = id_mapping['tgt']['item2id'][raw_iid]
                 test_cold_tgt.append([uid, iid])
         elif raw_uid in id_mapping['tgt']['user2id']:
+            # overlap_users/tgt_only_users
+            # 他的交互按照warm_test_ratio、warm_valid_ratio比例，分别放入train_tgt/valid_warm_tgt/test_warm_tgt
+            # 这里如果shuffle_user_sequence=False，用户交互List没有重排序的话，这里最新的交互会被放入valid/test，引入时间信息
             uid = id_mapping['tgt']['user2id'][raw_uid]
             seq_len = len(item_seq)
             num_test = max(1, int(seq_len * config['warm_test_ratio'])) if config['warm_test_ratio'] else 0
@@ -324,28 +271,6 @@ def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
     )
 
 def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, joint_path):
-    """
-    功能：
-        为跨域联合数据集构建并保存多模态 embedding。
-        该方法在 joint 数据集构建阶段被调用，
-        根据配置并行处理源域（src）和目标域（tgt）的模态特征，并行调用AmazonModalityProcessor进行处理
-        并将最终 embedding 保存到 joint_path。
-    说明：
-        - 仅在配置中启用模态（modality['enabled'] == True）时生效
-        - embedding涉及的交互信息只来自训练集
-        - 支持 src / tgt 域独立的模态处理流程
-    输入：
-        config: dict
-            模态相关配置（是否启用、PCA 维度等）
-        domains: List[str]
-            域名称列表，顺序为 [src_domain, tgt_domain]
-        id_mapping: dict
-            src / tgt 域的 item ID 映射
-        train_src / train_tgt: pd.DataFrame
-            用于确定训练阶段可见的 item
-        joint_path: str
-            联合数据集存储路径
-    """
     domain_role_map = {
         domains[0]: {"role": "src"},
         domains[1]: {"role": "tgt"},
@@ -362,6 +287,7 @@ def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, join
     with ThreadPoolExecutor(max_workers=len(domains)) as executor:
         future_to_domain = {}
 
+        # 每个域一个AmazonModalityProcessor，处理该域的所有模态
         for domain in domains:
             info = domain_role_map[domain]
 
@@ -374,7 +300,7 @@ def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, join
                 joint_path=joint_path,
             )
 
-            future = executor.submit(processor.run_full_pipeline)
+            future = executor.submit(processor.run_full_pipeline) # 入口
             future_to_domain[future] = domain
 
         results = {}
@@ -395,19 +321,8 @@ def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, join
                 results[domain] = False
 
 def check_and_prepare_Amazon2014_single(config, domain):
-    """
-    功能：
-        检查并准备 Amazon2014 的单域（single-domain）数据。
-        该方法负责：
-        - 检查指定 domain 的单域 processed 数据是否已存在
-        - 若缺失，则自动调用 AmazonDataProcessor 重新构建
-    必要检查文件：
-        - processed/all_item_seqs.json
-          （单域内所有用户的完整交互序列）
-    构建逻辑：
-        - 若必要文件存在：直接返回，跳过处理
-        - 若必要文件缺失：调用 AmazonDataProcessor.run_full_pipeline()
-    """
+    # 检查是否该域是否缺失all_item_seqs.json
+    # 如果没有该文件，跑一个AmazonDataProcessor类的run_full_pipeline()生成这个json
     domain_path = os.path.join(config['data_path'], config['dataset'], domain)
     processed_dir = os.path.join(domain_path, 'processed')
 
@@ -423,7 +338,7 @@ def check_and_prepare_Amazon2014_single(config, domain):
 
         try:
             processor = AmazonDataProcessor(config, domain, config['data_path'])
-            processor.run_full_pipeline()
+            processor.run_full_pipeline()   # 生成json文件入口
             logger.info(f"[TRAINING] [{domain}] Data processing pipeline completed")
 
             still_missing = [f for f in required_files if not os.path.exists(f)]
@@ -440,18 +355,7 @@ def check_and_prepare_Amazon2014_single(config, domain):
     return True
 
 def create_joint_dataset(domains: List[str], config: dict):
-    """
-    功能：
-        构建 Amazon2014 的跨域联合数据集（joint dataset）。
-        该方法是 joint 数据集的统一构建入口，负责从两个单域数据中
-        生成完整的跨域推荐训练与评估所需文件。
-    主要流程：
-        1. 加载源域 / 目标域的 all_item_seqs.json
-        2. （可选）仅保留 overlap 用户并执行双域 k-core 过滤
-        3. 用户划分（overlap / warm / cold）并重新编号，生成all_users.json和id_mapping.json
-        4. 构建 src / tgt 的 train / valid / test 交互数据，生成六个pkl
-        5. （可选）构建并保存多模态 embedding
-    """
+    # 联合跨域数据集生成逻辑，主要包含四个步骤
     data_path = config['data_path'] if 'data_path' in config else '../data/'
     joint_dataset_name = "+".join(domains)
     dataset_type = "only_overlap_users" if config['only_overlap_users'] else "all_users"
@@ -469,6 +373,11 @@ def create_joint_dataset(domains: List[str], config: dict):
     os.makedirs(os.path.join(joint_path, 'modality_emb_tgt'), exist_ok=True)
     logger.info(f"[JOINT] Creating joint dataset: {joint_dataset_name}")
 
+    # 第一步：读入两个域 单域处理好的 all_item_seqs.json
+    # 如果 Yaml中配置only_overlap_users=True，额外进行一步操作：双域k-cores操作
+    # 这个操作会保证： 1.每个用户在每一个域都至少有k个交互物品（因此最终留下的都是重叠用户） 2.每个物品在该域内至少有k个用户交互过
+    # 如果only_overlap_users=True，那么数据集只剩下重叠用户了
+    # 这里也决定了联合跨域数据集目录是all_users（only_overlap_users=False），还是only_overlap_users（only_overlap_users=True）
     logger.info("\n=== STEP 1: Load all_item_seqs from src & tgt ===")
     src_processed_dir = os.path.join(data_path, 'Amazon2014', domains[0], 'processed')
     tgt_processed_dir = os.path.join(data_path, 'Amazon2014', domains[1], 'processed')
@@ -476,13 +385,60 @@ def create_joint_dataset(domains: List[str], config: dict):
     if config['only_overlap_users']:
         all_item_seqs = filter_overlap_users(all_item_seqs, config['k_cores'], joint_dataset_name)
 
+    # 第二步：把用户划分成为五类，给用户、物品编号
+    # 具体逻辑在里面
+    # 最后保存all_users.json和id_mapping.json
+    # all_users.json例子：
+    # {
+    #     "overlap_users": [1, 2, 3, ...],
+    #     "valid_cold_users": [3131, 3136, 3222, ...],
+    #     "test_cold_users": [3132, 3138, 3199, ...],
+    #     "src_only_users": [3129, 3130, 3133, ...],
+    #     "tgt_only_users":[3129, 3130, 3131, ...],
+    # }
+    # id_mapping.json例子：
+    # {
+    #     "src": {
+    #         "user2id": {"raw_user_id": 1, "...": "..."},
+    #         "id2user": ["[PAD]", "raw_user_id", "..."],
+    #         "item2id": {"raw_item_id": 1, "...": "..."},
+    #         "id2item": ["[PAD]", "raw_item_id", "..."]
+    #     },
+    #     "tgt": {
+    #         "user2id": {"raw_user_id": 1, "...": "..."},
+    #         "id2user": ["[PAD]", "..."],
+    #         "item2id": {"raw_item_id": 1, "...": "..."},
+    #         "id2item": ["[PAD]", "..."]
+    #     }
+    # }
+    # 每一个域对于物品、用户的编号都是从1开始的。
+    # 对于用户来说，重叠用户的编号靠前，且同一个用户两个域的编号相同，比如1-3128是重叠用户，源域的1号用户和目标域1号用户是同一个用户。
+    # 3129开始就是每个域的单域用户了，源域的3129号用户和目标域3129号用户不是同一个用户。
     logger.info("\n=== STEP 2: Split users and reindex ===")
     all_users, id_mapping = split_users_and_reindex(config, joint_path, all_item_seqs)
 
+    # 第三步，划分train/valid/test，生成六个pkl文件，每个文件都是DataFrame，列名：['user', 'item']，记录一组交互。
+    # 具体逻辑在里面
+    # 每个pkl文件都是以id形式保存物品、用户的，而不是raw id。
     logger.info("\n=== STEP 3: Split train/valid/test ===")
     train_src, train_tgt, valid_cold_tgt, test_cold_tgt, valid_warm_tgt, test_warm_tgt =\
         split_interation(config, joint_path, all_item_seqs, all_users, id_mapping)
 
+    # 第四步，处理Yaml中每一个Enable=true的模态，每一个模态分别在modality_emb_src、modality_emb_tgt文件夹中生成三个文件：
+    # modality_emb_src /
+    # ├── < name > _metadata.json
+    # ├── < name > _ < emb_model > _ < emb_dim >.npy
+    # └── < name > _final_emb_ < emb_pca >.npy
+    # modality_emb_tgt /
+    # ├── < name > _metadata.json
+    # ├── < name > _ < emb_model > _ < emb_dim >.npy
+    # └── < name > _final_emb_ < emb_pca >.npy
+    # metadata文件是一个json，一般按照用户/物品的id为key，该用户、物品的profile作为value。
+    # < name > _ < emb_model > _ < emb_dim >.npy是嵌入模型直接生成的embedding。
+    # 最后一个final_emb是最终处理后的emb。
+    # 这三个文件由 prepare_modality_emb 里面的三个方法分别生成，这三个方法都是可以在<model>.py中由每个模型去实现的。
+    # 之所以要在这里重新分成src、tgt，是因为用户、物品在两个域是分别编号的，都是从1开始，分开来方便区分一点。
+    # 但由于处理逻辑都是<model>.py实现的，也是模型自已拿来用，实际上最后只要能给出两个final_emb就可以了。
     logger.info("\n=== STEP 4: Prepare modality embeddings ===")
     prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, joint_path)
 
@@ -490,52 +446,28 @@ def create_joint_dataset(domains: List[str], config: dict):
     return joint_path
 
 def check_and_prepare_Amazon2014(config):
-    """
-    功能：
-        Amazon2014 跨域推荐 benchmark 的「统一数据检查与自动构建入口」。
-        负责：
-        1）单域（single-domain）数据集的完整性检查与构建
-        2）联合（joint-domain）数据集的完整性检查与构建
-    --------------------------------------------------
-    一、Single-domain（单域数据集）
-    --------------------------------------------------
-    1. 针对 config['domains'] 中的每一个 domain：
-        并行执行 check_and_prepare_Amazon2014_single(config, domain)
-        同时检查多个domain文件完整性
-    --------------------------------------------------
-    二、Joint-domain（联合数据集）
-    --------------------------------------------------
-    1.检查 joint_path 下是否存在所有必要文件
-        Joint-domain 必要检查文件（必须存在）：
-           - all_users.json
-           - id_mapping.json
-           - train_src.pkl
-           - train_tgt.pkl
-           - valid_cold_tgt.pkl
-           - test_cold_tgt.pkl
-           - valid_warm_tgt.pkl
-           - test_warm_tgt.pkl
-        Joint-domain 可选检查文件（模态相关，按配置启用）：
-           - modality_emb_src/{modality_name}_final_emb_{emb_pca}.npy
-           - modality_emb_tgt/{modality_name}_final_emb_{emb_pca}.npy
-           其中：
-           - 仅当 modality['enabled'] == True 时才要求存在
-           - 模态文件缺失将视为 joint 数据集不完整
-    2. 若任意 joint-domain 必要 / 启用的可选文件缺失：
-       → 直接调用：create_joint_dataset(domains, config)
-         重新构建整个 joint 数据集
-
-    --------------------------------------------------
-    输出：
-        bool
-            - True ：所有 single / joint 数据集文件均已准备完成
-            - False：任一阶段构建失败
-    """
+    # 分成两步
     domains = config['domains']
 
+    # 第一步分别单独处理两个域的数据集，下载raw文件，初步处理用户交互数据并保存为all_item_seqs.json，
+    # 最终形成如下文件：
+    # Amazon2014 /
+    # ├── Clothing_Shoes_and_Jewelry /  单域数据集1
+    # │   ├── raw /
+    # │   │   ├── meta_Clothing_Shoes_and_Jewelry.json.gz
+    # │   │   └── reviews_Clothing_Shoes_and_Jewelry_5.json.gz
+    # │   └── processed /
+    # │       └── all_item_seqs.json
+    # ├── Sports_and_Outdoors /    单域数据集2
+    # │   ├── raw /
+    # │   │   ├── meta_Sports_and_Outdoors.json.gz
+    # │   │   └── reviews_Sports_and_Outdoors_5.json.gz
+    # │   └── processed /
+    # │       └── all_item_seqs.json
     # STEP 1: Checking and preparing individual Amazon datasets
     logger.info(f"[TRAINING] Starting parallel data preparation for dataset: Amazon2014, processing domains individually: {domains}")
     with ThreadPoolExecutor(max_workers=len(domains)) as executor:
+        # 每个域跑一个 check_and_prepare_Amazon2014_single，进行单域处理
         future_to_dataset = {
             executor.submit(check_and_prepare_Amazon2014_single, config, domain): domain
             for domain in domains
@@ -558,11 +490,31 @@ def check_and_prepare_Amazon2014(config):
         return False
     logger.info(f"[TRAINING] All single-domain datasets are prepared successfully: {list(results.keys())}")
 
+    # 第二步生成联合跨域数据集，这个数据集最终用于模型训练与评估，它是单向的，只评估模型在target域上的热/冷推荐表现，
+    # 最终形成如下文件：
+    # Amazon2014 /
+    # └── Clothing_Shoes_and_Jewelry + Sports_and_Outdoors /   联合数据集文件夹
+    # └── all_users / (或者 only_overlap_users /,  `only_overlap_users`控制该目录)
+    #       └── WarmValid{w_v}_WarmTest{w_t}_ColdValid{c_v}_ColdTest{c_t} /
+    #             ├── train_src.pkl
+    #             ├── train_tgt.pkl
+    #             ├── valid_warm_tgt.pkl
+    #             ├── test_warm_tgt.pkl
+    #             ├── valid_cold_tgt.pkl
+    #             ├── test_cold_tgt.pkl
+    #             ├── all_users.json
+    #             ├── id_mapping.json
+    #             ├── modality_emb_src /
+    #             └── modality_emb_tgt /
     # STEP 2: Checking and creating joint Amazon dataset
     if len(domains) != 2:
         logger.info("[TRAINING] Single dataset mode, skipping joint dataset creation")
         return True
-
+    # 先检查文件是否齐全，包括：
+    # all_users.json、id_mapping.json 这两个json
+    # 六个pkl文件
+    # 每个Yaml配置中Enable = True的模态在modality_emb_src、modality_emb_tgt文件夹中的两个文件：{modality['name']}_final_emb_{str(modality['emb_pca'])}.npy
+    # 如果少了任何一个，就用create_joint_dataset开始生成
     data_path = config['data_path'] if 'data_path' in config else '../data/'
     joint_dataset_name = "+".join(domains)
     dataset_type = "only_overlap_users" if config['only_overlap_users'] else "all_users"
@@ -600,6 +552,7 @@ def check_and_prepare_Amazon2014(config):
         logger.info(f"[TRAINING] One or more joint dataset files are missing. Recreating ALL joint files.")
         logger.info(f"Missing files: {missing_joint_files}")
         try:
+            # 这里是联合跨域数据集处理入口
             create_joint_dataset(domains=domains, config=config)
 
             still_missing = [f for f in required_joint_files if not os.path.exists(f)]

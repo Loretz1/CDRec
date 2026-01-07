@@ -119,42 +119,27 @@ class AmazonDataProcessor:
         return all_item_seqs
 
     def run_full_pipeline(self):
-        """
-        功能：
-            执行 Amazon2014 单域数据集的完整处理流程，生成该 domain 的基础 processed 数据。
-        主要流程：
-            1. 下载原始 reviews / meta 数据（若本地不存在）
-            2. 解析 reviews，构建用户的交互序列，如果config['shuffle_user_sequence']则打乱每个用户的交互，否则交互按时间顺序排序
-            3. 生成并保存 processed/all_item_seqs.json
-        产出文件：
-            - processed/all_item_seqs.json
-              （单域内所有用户的完整交互序列）
-                {
-                  "<raw_user_id_1>": [
-                    "<raw_item_id_1>",
-                    "<raw_item_id_2>",
-                    "<raw_item_id_3>",
-                    ...
-                  ],
-                  "<raw_user_id_2>": [
-                    "<raw_item_id_4>",
-                    "<raw_item_id_5>",
-                    ...
-                  ],
-                  ...
-                }
-        说明：
-            - 若 processed 数据已存在，将自动跳过重复处理
-            - 该方法仅处理单域数据，不涉及跨域划分或重编号
-        """
+        # 分两步
         logger.info(f"Starting Amazon Reviews 2014 dataset processing - Domain: {self.domain}")
 
         self._check_available_domain()
 
+        # 第一步检查raw文件在不在，如果没有，下载一下。
+        # raw文件包括：物品侧信息meta_{domain-name}.json.gz、用户-物品交互评论信息reviews_{domain-name}_5.json.gz
         logger.info("\n=== Step 1: Download raw data ===")
         reviews_path = self._download_raw('reviews')
         meta_path = self._download_raw('meta')
 
+        # 第二步读一下reviews_{domain-name}_5.json.gz
+        # 形成all_item_seqs.json:
+        # {
+        #   "A1KLRMWW2FWPL4": ["B003U3GOFO", "B009H6NPBE", "B00400N6XE", "..."],
+        #   "A2G5TCU2WDFZ65": ["B0019K9WDQ", "B0036FSXI2", "B00B7TBDTU", "..."],
+        #   "A1RLQXYNCMWRWN": ["B0007YVP1W", "B004LXVIDK", "B000LSWXWO", "..."]
+        # }
+        # 这里的 key 是用户raw id， 后面的value是一个List，包含该用户交互的所有物品 raw id，
+        # 此处 Yaml文件如果配置shuffle_user_sequence = True，则每个用户交互列表内的物品被打乱，隐去时间信息，
+        # 否则会按照时间排序
         logger.info("\n=== Step 2: Process reviews ===")
         self.all_item_seqs = self._process_reviews(reviews_path)
 

@@ -21,10 +21,12 @@ By adjusting dataset configuration options, users can easily construct customize
 CDR datasets.
 This flexibility enables CDRec to support a wide range of experimental designs
 and emerging CDR scenarios.
+
 Dataset preprocessing in CDRec is fully configurable and controls user overlap,
 interaction filtering, and train–validation–test splitting, which together define
 the resulting evaluation scenario. All preprocessing options are specified via
 YAML files to ensure reproducibility and flexibility.
+
 CDRec provides two configurable YAML files for **Dataset Setting**:
 - **Model configuration (High Priority)**:  
   `configs/model/<model_name>.yaml`
@@ -387,6 +389,10 @@ the model configuration file `configs/model/<model_name>.yaml`.
 **Only the final training stage performs evaluation and early stopping**;
 all preceding stages are executed as pure training phases without validation
 or test-time performance monitoring.
+
+Accordingly, each model implementation (`<model>.py`) must implement
+`set_train_stage(stage)` to control which model parameters are trainable
+in different stages by enabling or freezing their gradients.
 
 A multi-stage training pipeline is defined as a list of stages, for example:
 ```yaml

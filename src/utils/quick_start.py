@@ -85,15 +85,18 @@ def quick_start(model, dataset, domains, save_model=True):
         # trainer loading and initialization
         trainer = get_trainer()(config, model)
 
-        # multi-stage training
+        # multi-stage training 多阶段训练，根据模型Yaml中配置的training_stages。
+        # 只有最后一个stage有eval和早停
         for i, stage_config in enumerate(config['training_stages']):
             logger.info("Training stage {}: {}".format(i + 1, stage_config['name']))
-
+            # 不同阶段设置不同的数据加载方式，由Yaml中的state控制
+            # state需要满足TrainDataLoaderState这个枚举类其中的一个，代表一种数据加载方式。
+            # 详细的interaction格式可以看项目README.md的Multi-stage Training Details部分，有详细说明。
             train_data.set_state_for_train(TrainDataLoaderState[stage_config['state']])
             train_data.set_batch_size(stage_config['train_batch_size'])
 
             eval = True if i == len(config['training_stages']) - 1 else False
-            trainer.set_train_stage(i, stage_config, eval)
+            trainer.set_train_stage(i, stage_config, eval)  # 设置一下不同阶段训练参数，比如optimizer等
 
             # model training
             (best_valid_score_warm, best_valid_result_warm, best_test_upon_valid_warm,
