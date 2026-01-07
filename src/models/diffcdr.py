@@ -20,6 +20,7 @@ class DiffCDR(GeneralRecommender):
         self.target_user_embedding = nn.Embedding(self.num_users_tgt + 1, self.emb_dim, padding_idx=0)
         self.target_item_embedding = nn.Embedding(self.num_items_tgt + 1, self.emb_dim, padding_idx=0)
 
+        # without_diffusion
         self.diff_model = DiffModel(config['diff_steps'], config['diff_dim'], config['emb_dim'], config['diff_scale'], config['diff_sample_steps'],
                                   config['diff_task_lambda'], config['diff_mask_rate'])
         # self.mapper = MLPMapper(self.emb_dim)
