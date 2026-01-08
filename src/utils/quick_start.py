@@ -80,7 +80,8 @@ def quick_start(model, dataset, domains, save_model=True):
         logger.info(model)
 
         tbdir = f"runs/{logfilename[0]}-{logfilename[1]}-{logfilename[2]}-{logfilename[3]}-{config['hyper_parameters']}={hyper_tuple}" # tb ablation study要改名字
-        writer = tb.SummaryWriter(log_dir=tbdir) # tb
+        tbdir_short = f"runs/{logfilename[0]}-{logfilename[1]}-{logfilename[2]}-{logfilename[3]}-{hyper_tuple}"
+        writer = tb.SummaryWriter(log_dir=(tbdir if len(tbdir) <= 240 else tbdir_short)) # tb
 
         # trainer loading and initialization
         trainer = get_trainer()(config, model)
