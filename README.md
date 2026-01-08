@@ -193,8 +193,7 @@ Amazon2014/
             ├── test_cold_tgt.pkl
             ├── all_users.json
             ├── id_mapping.json
-            ├── modality_emb_src/
-            └── modality_emb_tgt/
+            └── modality_emb/
 ```
 Here, {w_v}, {w_t}, {c_v}, and {c_t} are determined by the YAML parameters
 warm_valid_ratio, warm_test_ratio, t_cold_valid, and t_cold_test,
@@ -204,7 +203,7 @@ Joint dataset construction proceeds through four sequential steps:
 1. Load and filter users and items
 2. Split users and reindex user/item IDs
 3. Split interactions into train/validation/test sets
-4. Prepare modality embeddings for source and target domains
+4. Prepare modality embeddings
 
 ####  Step 1: Load Interaction Sequences and Apply Overlap Filtering 
 After loading `all_item_seqs.json` from both the source and target domains,
@@ -318,20 +317,17 @@ as follows.
     target-domain interactions are held out from training and are saved entirely
     to `valid_cold_tgt.pkl` and `test_cold_tgt.pkl`, respectively, for cold-start
     evaluation.
+  
+It is important to note that all validation and test sets are constructed exclusively for the target domain.
 
 #### Step 4: Prepare Modality Embeddings
-In Step 4, CDRec prepares modality embeddings per domain according to the
+In Step 4, CDRec prepares modality embeddings according to the
 `modalities` configuration in the YAML file.
 Each modality entry must contain the following fields: `name`, `emb_model`, `emb_dim`, `emb_pca` , `enabled`,
 Only modalities with enabled: true are processed. For each enabled modality,
-CDRec generates three files per domain, stored under `modality_emb_src/` and `modality_emb_tgt/`:
+CDRec generates three files per domain, stored under `modality_emb/`:
 ```text
-modality_emb_src/
-├──<name>_metadata.json
-├── <name>_<emb_model>_<emb_dim>.npy
-└── <name>_final_emb_<emb_pca>.npy
-
-modality_emb_tgt/
+modality_emb/
 ├──<name>_metadata.json
 ├── <name>_<emb_model>_<emb_dim>.npy
 └── <name>_final_emb_<emb_pca>.npy
@@ -340,7 +336,7 @@ These files store the corresponding metadata, the raw modality embeddings and th
 embeddings, respectively. Modalities with
 enabled: false are skipped and no files are generated.
 
-For each enabled modality and for each domain, CDRec processes the modality data
+For each enabled modality, CDRec processes the modality data
 through three sequential functions, each responsible for generating one of
 the modality-related files:
 ```text

@@ -25,8 +25,7 @@ class RecDataset(object):
             - test_cold_tgt.pkl
             - valid_warm_tgt.pkl
             - test_warm_tgt.pkl
-            - modality_emb_src/*.npy（可选）
-            - modality_emb_tgt/*.npy（可选）
+            - modality_emb/*.npy（可选）
 
     数据处理：
         - 加载 src / tgt 的交互数据（DataFrame，列为 [user, item]）
@@ -94,8 +93,6 @@ class RecDataset(object):
         self.all_users, self.id_mapping, self.train_src, self.train_tgt, self.valid_cold_tgt, self.test_cold_tgt, self.valid_warm_tgt, self.test_warm_tgt, self.modality_embeddings = self._load_data(
             dataset_path)
 
-        self.modality_embeddings = self._add_padding_for_modality_embeddings(self.modality_embeddings)
-
         self.positive_items_src, self.positive_items_tgt = self._get_positive_items_set(self.train_src, self.train_tgt)
 
         all_train_stages = [TrainDataLoaderState[i['state']] for i in self.config['training_stages']]
@@ -129,31 +126,19 @@ class RecDataset(object):
         valid_warm_tgt = pd.read_pickle(os.path.join(dataset_path, 'valid_warm_tgt.pkl'))
         test_warm_tgt = pd.read_pickle(os.path.join(dataset_path, 'test_warm_tgt.pkl'))
 
-        modality_embeddings = {"src": {},"tgt": {}}
+        modality_embeddings = {}
         for modality in self.config['modalities']:
             if not modality.get('enabled', False):
                 continue
             emb_name = modality['name'] + '_final_emb_'+ str(modality['emb_pca'])+ '.npy'
-            src_emb_path = os.path.join(dataset_path, 'modality_emb_src', emb_name)
-            tgt_emb_path = os.path.join(dataset_path, 'modality_emb_tgt', emb_name)
+            emb_path = os.path.join(dataset_path, 'modality_emb', emb_name)
 
-            modality_embeddings["src"][modality['name']] = np.load(src_emb_path)
-            modality_embeddings["tgt"][modality['name']] = np.load(tgt_emb_path)
+            modality_embeddings[modality['name']] = np.load(emb_path)
 
         self.logger.info('[TRAINING] Dataset loading finished.')
 
         return (all_users, id_mapping, train_src, train_tgt, valid_cold_tgt, test_cold_tgt, valid_warm_tgt,
                 test_warm_tgt, modality_embeddings)
-
-    def _add_padding_for_modality_embeddings(self, modality_embeddings):
-        for domain in ['src', 'tgt']:
-            for modality_name, emb in modality_embeddings[domain].items():
-                emb_dim = emb.shape[1]
-                pad_embedding = np.zeros((1, emb_dim), dtype=emb.dtype)
-                modality_embeddings[domain][modality_name] = np.concatenate(
-                    [pad_embedding, emb], axis=0
-                )
-        return modality_embeddings
 
     def _get_positive_items_set(self, train_src, train_tgt):
         positive_items_src = {}

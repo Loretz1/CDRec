@@ -9,13 +9,12 @@ import numpy as np
 logger = logging.getLogger()
 
 class AmazonModalityProcessor:
-    def __init__(self,config,domain,role, id_mapping,train_df,joint_path,):
+    def __init__(self, config, domains, id_mapping, train_df, joint_path):
         self.config = config
-        self.domain = domain
-        self.domain_role = role
+        self.domains = domains
         self.id_mapping = id_mapping
         self.interaction = train_df
-        self.joint_path = os.path.join(joint_path, 'modality_emb_' + self.domain_role)
+        self.joint_path = os.path.join(joint_path, 'modality_emb')
         self.reviews = {}
         self.metadata = {}
 
@@ -72,16 +71,17 @@ class AmazonModalityProcessor:
             return modality_data
 
         if self.reviews == {} and self.metadata == {}:
-            reviews_path = os.path.join(self.config['data_path'], self.config['dataset'], self.domain, 'raw',
-                                        'reviews_' + self.domain + "_5.json.gz")
-            metadata_path = os.path.join(self.config['data_path'], self.config['dataset'], self.domain, 'raw',
-                                         'meta_' + self.domain + ".json.gz")
-            self.reviews, self.metadata = self._load_raw(reviews_path, metadata_path, self.id_mapping)
+            for role, domain in zip(['src', 'tgt'], self.domains):
+                reviews_path = os.path.join(self.config['data_path'], self.config['dataset'], domain, 'raw',
+                                            'reviews_' + domain + "_5.json.gz")
+                metadata_path = os.path.join(self.config['data_path'], self.config['dataset'], domain, 'raw',
+                                             'meta_' + domain + ".json.gz")
+                self.reviews[role], self.metadata[role] = self._load_raw(reviews_path, metadata_path, self.id_mapping)
 
         func_name = f"extract_{modality['name']}_modality_data"
         handler = self._get_modality_handler(func_name)
         logger.info(f'[DATASET] Extracting meta: {modality["name"]}...')
-        modality_data = handler(self.config, modality, self.domain_role, self.interaction, self.id_mapping, self.reviews, self.metadata)
+        modality_data = handler(self.config, modality, self.interaction, self.id_mapping, self.reviews, self.metadata)
         logger.info(f'[DATASET] Saving modality data: {modality["name"]}..')
         with open(modality_data_path, 'w') as f:
             json.dump(modality_data, f)
@@ -98,7 +98,7 @@ class AmazonModalityProcessor:
         func_name = f"generate_{modality['name']}_embs"
         handler = self._get_modality_handler(func_name)
         logger.info(f'[DATASET] Generatinng embs: {modality["name"]}...')
-        embs = handler(self.config, modality, self.domain_role, self.interaction, self.id_mapping, modality_data)
+        embs = handler(self.config, modality, self.interaction, self.id_mapping, modality_data)
         logger.info(f'[DATASET] Saving embs: {modality["name"]}..')
         np.save(embs_path, embs)
         return embs
@@ -114,7 +114,7 @@ class AmazonModalityProcessor:
         func_name = f"generate_{modality['name']}_final_embs"
         handler = self._get_modality_handler(func_name)
         logger.info(f'[DATASET] Generatinng final embs: {modality["name"]}...')
-        final_embs = handler(self.config, modality, self.domain_role, self.interaction, self.id_mapping, embs)
+        final_embs = handler(self.config, modality, self.interaction, self.id_mapping, embs)
         logger.info(f'[DATASET] Saving final embs: {modality["name"]}..')
         np.save(final_embs_path, final_embs)
         return final_embs
@@ -145,7 +145,7 @@ class AmazonModalityProcessor:
             )
             return False
 
-    def extract_sentence_modality_data(self, config, modality, role, interaction, id_mapping, reviews, metadata):
+    def extract_sentence_modality_data(self, config, modality, interaction, id_mapping, reviews, metadata):
         def clean_text(raw_text: str) -> str:
             import re
             import html
@@ -181,24 +181,26 @@ class AmazonModalityProcessor:
                 sentence = clean_text(str(raw))
             return sentence + ' '
 
-        item2meta = {}
-        for item, meta in metadata.items():
-            if item not in id_mapping[role]['item2id'].keys():
-                continue
-            meta_sentence = ''
-            keys = set(meta.keys())
-            features_needed = ['title', 'price', 'brand', 'feature', 'categories', 'description']
-            for feature in features_needed:
-                if feature in keys:
-                    meta_sentence += _sent_process(meta[feature])
-            item2meta[item] = meta_sentence
+        item2meta = {"src": {}, "tgt": {}}
+        for role in ['src', 'tgt']:
+            for item, meta in metadata[role].items():
+                if item not in id_mapping[role]['item2id'].keys():
+                    continue
+                meta_sentence = ''
+                keys = set(meta.keys())
+                features_needed = ['title', 'price', 'brand', 'feature', 'categories', 'description']
+                for feature in features_needed:
+                    if feature in keys:
+                        meta_sentence += _sent_process(meta[feature])
+                item2meta[role][item] = meta_sentence
         return item2meta
 
-    def generate_sentence_embs(self, config, modality, role, interaction, id_mapping, modality_data):
-        meta_sentences = []
-        for i in range(1, len(id_mapping[role]['id2item'])):
-            item = id_mapping[role]['id2item'][i]
-            meta_sentences.append(modality_data[item])
+    def generate_sentence_embs(self, config, modality, interaction, id_mapping, modality_data):
+        meta_sentences = {"src": [], "tgt": []}
+        for role in ['src', 'tgt']:
+            for i in range(1, len(id_mapping[role]['id2item'])):
+                item = id_mapping[role]['id2item'][i]
+                meta_sentences[role].append(modality_data[role][item])
 
         if 'sentence-transformers' in modality['emb_model']:
             try:
@@ -206,13 +208,21 @@ class AmazonModalityProcessor:
                 device = config.get('device', 'cpu')
                 sent_emb_model = SentenceTransformer(modality['emb_model']).to(device)
 
-                sent_embs = sent_emb_model.encode(
-                    meta_sentences,
+                sent_embs_src = sent_emb_model.encode(
+                    meta_sentences["src"],
                     convert_to_numpy=True,
                     batch_size=modality['emb_batch_size'],
                     show_progress_bar=True,
                     device=device
                 )
+                sent_embs_tgt = sent_emb_model.encode(
+                    meta_sentences["tgt"],
+                    convert_to_numpy=True,
+                    batch_size=modality['emb_batch_size'],
+                    show_progress_bar=True,
+                    device=device
+                )
+                sent_embs = np.concatenate((sent_embs_src, sent_embs_tgt), axis=0)
             except ImportError:
                 raise ImportError("Please install sentence-transformers: pip install sentence-transformers")
 
@@ -230,39 +240,40 @@ class AmazonModalityProcessor:
                 client = OpenAI(**client_kwargs)
 
                 sent_embs = []
-                for i in tqdm(range(0, len(meta_sentences), modality['emb_batch_size']), desc='Encoding'):
-                    batch = meta_sentences[i:i + modality['emb_batch_size']]
-                    try:
-                        responses = client.embeddings.create(
-                            input=batch,
-                            model=modality['emb_model']
-                        )
-                        for response in responses.data:
-                            sent_embs.append(response.embedding)
-                    except Exception as e:
-                        print(f'Encoding failed {i} - {i + modality["emb_batch_size"]}: {e}')
-
+                for role in ['src', 'tgt']:
+                    for i in tqdm(range(0, len(meta_sentences[role]), modality['emb_batch_size']), desc='Encoding'):
+                        batch = meta_sentences[role][i:i + modality['emb_batch_size']]
                         try:
-                            new_batch = []
-                            for sent in batch:
-                                if len(sent) > 8000:
-                                    new_batch.append(sent[:8000])
-                                else:
-                                    new_batch.append(sent)
-
-                            print(f'[TOKENIZER] Retrying batch {i} - {i + modality["emb_batch_size"]}')
-                            import time
-                            time.sleep(2)
-
                             responses = client.embeddings.create(
-                                input=new_batch,
+                                input=batch,
                                 model=modality['emb_model']
                             )
                             for response in responses.data:
                                 sent_embs.append(response.embedding)
-                        except Exception as retry_e:
-                            print(f'Retry also failed: {retry_e}')
-                            raise retry_e
+                        except Exception as e:
+                            print(f'Encoding failed {i} - {i + modality["emb_batch_size"]}: {e}')
+
+                            try:
+                                new_batch = []
+                                for sent in batch:
+                                    if len(sent) > 8000:
+                                        new_batch.append(sent[:8000])
+                                    else:
+                                        new_batch.append(sent)
+
+                                print(f'[TOKENIZER] Retrying batch {i} - {i + modality["emb_batch_size"]}')
+                                import time
+                                time.sleep(2)
+
+                                responses = client.embeddings.create(
+                                    input=new_batch,
+                                    model=modality['emb_model']
+                                )
+                                for response in responses.data:
+                                    sent_embs.append(response.embedding)
+                            except Exception as retry_e:
+                                print(f'Retry also failed: {retry_e}')
+                                raise retry_e
 
                 sent_embs = np.array(sent_embs, dtype=np.float32)
             except ImportError:
@@ -272,14 +283,24 @@ class AmazonModalityProcessor:
 
         return sent_embs
 
-    def generate_sentence_final_embs(self, config, modality, role, interaction, id_mapping, embs):
+    def generate_sentence_final_embs(self, config, modality, interaction, id_mapping, embs):
+        src_item_num = len(id_mapping['src']['item2id'])
+        tgt_item_num = len(id_mapping['tgt']['item2id'])
+        assert (src_item_num + tgt_item_num == embs.shape[0])
+
+        src_embs = embs[:src_item_num]
+        tgt_embs = embs[src_item_num:src_item_num + tgt_item_num]
+
         if modality['emb_pca'] == modality['emb_dim']:
             pca_embs = embs
         elif modality['emb_pca'] < modality['emb_dim']:
             try:
                 from sklearn.decomposition import PCA
-                pca = PCA(n_components=modality['emb_pca'], whiten=True)
-                pca_embs = pca.fit_transform(embs)
+                pca_src = PCA(n_components=modality['emb_pca'], whiten=True)
+                pca_src_embs = pca_src.fit_transform(src_embs)
+                pca_tgt = PCA(n_components=modality['emb_pca'], whiten=True)
+                pca_tgt_embs = pca_tgt.fit_transform(tgt_embs)
+                pca_embs = np.concatenate((pca_src_embs, pca_tgt_embs), axis=0)
             except ImportError:
                 raise ImportError("Please install scikit-learn: pip install scikit-learn")
         else:

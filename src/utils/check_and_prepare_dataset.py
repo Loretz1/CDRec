@@ -271,54 +271,41 @@ def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
     )
 
 def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, joint_path):
-    domain_role_map = {
-        domains[0]: {"role": "src"},
-        domains[1]: {"role": "tgt"},
-    }
     all_id_mapping = {
         "src": id_mapping["src"],
         "tgt": id_mapping["tgt"],
     }
-    all_train_df = {
+    train_df = {
         "src": train_src,
         "tgt": train_tgt,
     }
 
-    with ThreadPoolExecutor(max_workers=len(domains)) as executor:
-        future_to_domain = {}
+    logger.info(f"[TRAINING] Start joint modality preparation for domains: {domains}")
 
-        # 每个域一个AmazonModalityProcessor，处理该域的所有模态
-        for domain in domains:
-            info = domain_role_map[domain]
+    try:
+        processor = AmazonModalityProcessor(
+            config=config,
+            domains=domains,              # ["Clothing...", "Sports..."]
+            id_mapping=all_id_mapping,  # {"src": ..., "tgt": ...}
+            train_df=train_df,            # {"src": df, "tgt": df}
+            joint_path=joint_path,
+        )
 
-            processor = AmazonModalityProcessor(
-                config=config,
-                domain=domain,
-                role=info["role"],
-                id_mapping=all_id_mapping,
-                train_df=all_train_df,
-                joint_path=joint_path,
-            )
+        result = processor.run_full_pipeline()
 
-            future = executor.submit(processor.run_full_pipeline) # 入口
-            future_to_domain[future] = domain
+        logger.info(
+            "[TRAINING] Joint modality preparation "
+            f"{'completed' if result else 'failed'}"
+        )
 
-        results = {}
-        for future in as_completed(future_to_domain):
-            domain = future_to_domain[future]
-            try:
-                result = future.result()
-                results[domain] = result
-                logger.info(
-                    f"[TRAINING] [{domain}] Modality Preparation "
-                    f"{'completed' if result else 'failed'}"
-                )
-            except Exception as e:
-                logger.error(
-                    f"[ERROR] [{domain}] Exception during modality preparation: {e}",
-                    exc_info=True
-                )
-                results[domain] = False
+        return result
+
+    except Exception as e:
+        logger.error(
+            "[ERROR] Exception during joint modality preparation",
+            exc_info=True
+        )
+        return False
 
 def check_and_prepare_Amazon2014_single(config, domain):
     # 检查是否该域是否缺失all_item_seqs.json
@@ -369,8 +356,7 @@ def create_joint_dataset(domains: List[str], config: dict):
         split_dir += f'_{config["k_cores"]}cores'
     joint_path = os.path.join(data_path, 'Amazon2014', joint_dataset_name, dataset_type, split_dir)
 
-    os.makedirs(os.path.join(joint_path, 'modality_emb_src'), exist_ok=True)
-    os.makedirs(os.path.join(joint_path, 'modality_emb_tgt'), exist_ok=True)
+    os.makedirs(os.path.join(joint_path, 'modality_emb'), exist_ok=True)
     logger.info(f"[JOINT] Creating joint dataset: {joint_dataset_name}")
 
     # 第一步：读入两个域 单域处理好的 all_item_seqs.json
@@ -424,12 +410,8 @@ def create_joint_dataset(domains: List[str], config: dict):
     train_src, train_tgt, valid_cold_tgt, test_cold_tgt, valid_warm_tgt, test_warm_tgt =\
         split_interation(config, joint_path, all_item_seqs, all_users, id_mapping)
 
-    # 第四步，处理Yaml中每一个Enable=true的模态，每一个模态分别在modality_emb_src、modality_emb_tgt文件夹中生成三个文件：
-    # modality_emb_src /
-    # ├── < name > _metadata.json
-    # ├── < name > _ < emb_model > _ < emb_dim >.npy
-    # └── < name > _final_emb_ < emb_pca >.npy
-    # modality_emb_tgt /
+    # 第四步，处理Yaml中每一个Enable=true的模态，每一个模态分别在modality_emb文件夹中生成三个文件：
+    # modality_emb /
     # ├── < name > _metadata.json
     # ├── < name > _ < emb_model > _ < emb_dim >.npy
     # └── < name > _final_emb_ < emb_pca >.npy
@@ -437,8 +419,7 @@ def create_joint_dataset(domains: List[str], config: dict):
     # < name > _ < emb_model > _ < emb_dim >.npy是嵌入模型直接生成的embedding。
     # 最后一个final_emb是最终处理后的emb。
     # 这三个文件由 prepare_modality_emb 里面的三个方法分别生成，这三个方法都是可以在<model>.py中由每个模型去实现的。
-    # 之所以要在这里重新分成src、tgt，是因为用户、物品在两个域是分别编号的，都是从1开始，分开来方便区分一点。
-    # 但由于处理逻辑都是<model>.py实现的，也是模型自已拿来用，实际上最后只要能给出两个final_emb就可以了。
+    # 由于处理逻辑都是<model>.py实现的，也是模型自已拿来用，实际上最后只要能给出两个final_emb就可以了，额外提供json、原始npy文件的保存方法，是为了避免重复调用大模型API。
     logger.info("\n=== STEP 4: Prepare modality embeddings ===")
     prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, joint_path)
 
@@ -504,8 +485,7 @@ def check_and_prepare_Amazon2014(config):
     #             ├── test_cold_tgt.pkl
     #             ├── all_users.json
     #             ├── id_mapping.json
-    #             ├── modality_emb_src /
-    #             └── modality_emb_tgt /
+    #             └── modality_emb /
     # STEP 2: Checking and creating joint Amazon dataset
     if len(domains) != 2:
         logger.info("[TRAINING] Single dataset mode, skipping joint dataset creation")
@@ -513,7 +493,7 @@ def check_and_prepare_Amazon2014(config):
     # 先检查文件是否齐全，包括：
     # all_users.json、id_mapping.json 这两个json
     # 六个pkl文件
-    # 每个Yaml配置中Enable = True的模态在modality_emb_src、modality_emb_tgt文件夹中的两个文件：{modality['name']}_final_emb_{str(modality['emb_pca'])}.npy
+    # 每个Yaml配置中Enable = True的模态在modality_emb文件夹中的文件：{modality['name']}_final_emb_{str(modality['emb_pca'])}.npy
     # 如果少了任何一个，就用create_joint_dataset开始生成
     data_path = config['data_path'] if 'data_path' in config else '../data/'
     joint_dataset_name = "+".join(domains)
@@ -543,8 +523,7 @@ def check_and_prepare_Amazon2014(config):
         if not modality['enabled']:
             continue
         final_embs_file_name = modality['name'] + '_final_emb_' + str(modality['emb_pca']) + '.npy'
-        required_joint_files.append(os.path.join(joint_path, 'modality_emb_src', final_embs_file_name))
-        required_joint_files.append(os.path.join(joint_path, 'modality_emb_tgt', final_embs_file_name))
+        required_joint_files.append(os.path.join(joint_path, 'modality_emb', final_embs_file_name))
 
     missing_joint_files = [f for f in required_joint_files if not os.path.exists(f)]
 
