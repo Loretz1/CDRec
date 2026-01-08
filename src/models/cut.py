@@ -3,13 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from common.abstract_recommender import GeneralRecommender
-from torch.distributions.kl import kl_divergence
-from torch.distributions import Normal
 from common.init import xavier_uniform_initialization
 import scipy.sparse as sp
-import math
 
 class CUT(GeneralRecommender):
+    """
+    CUT with LightGCN backbone
+    """
     def __init__(self, config, dataloader):
         super(CUT, self).__init__(config, dataloader)
         self.config=config

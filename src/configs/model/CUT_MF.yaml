@@ -18,23 +18,36 @@ cold_start_eval: False # Whether to enable cold start user evaluation
 training_stages:
   - name: target_training
     state: TARGET
+    epochs: [ 10 ]
+    train_batch_size: 2048
+    learner: adam
+    learning_rate: 0.01
+    learning_rate_scheduler: [1.0, 50]
+    weight_decay: 0.000001
+  - name: both_training
+    state: BOTH
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.001, 0.01]
-    learning_rate_scheduler: [ 1.0, 50 ]
-    weight_decay: 0.0
-#    clip_grad_norm: {"max_norm": 1.0}
+    learning_rate: [ 0.01 ]
+    learning_rate_scheduler: [1.0, 50]
+    weight_decay: 0.000001
 
 # 3. Fixed Model Parameters Setting
-loss_type: bpr
-dropout: 0.2
 feature_dim: 64
-mlp_hidden_dim: 128
-mlp_layers: 0
-log_model_suffix: BPRMF
+transform_weight: 1
+tau: 0.1
+log_model_suffix: on_overlap_dataset
 
 # 4. Model Hyperparameter Grid Search Setting
+gamma: [0.1, 0.3, 0.5, 0.7, 0.9]
+alpha: [0, 0.2, 0.5]
+lambda: [0.00001, 0.0001, 0.001, 0.1]
 
 # hyperparameter search space
-hyper_parameters: ["training_stages.0.learning_rate"]
+hyper_parameters:
+  - "training_stages.1.learning_rate"
+  - "training_stages.0.epochs"
+  - "gamma"
+  - "alpha"
+  - 'lambda'

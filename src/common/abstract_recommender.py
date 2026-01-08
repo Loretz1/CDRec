@@ -30,7 +30,7 @@ class AbstractRecommender(nn.Module):
 
         Args:
             interaction (Interaction): Interaction class of the batch.
-
+            The details of interaction can be found in: Chapter "Required and Optional Parameters" in ./README.md
         Returns:
             torch.Tensor: Training loss, shape: []
         """
