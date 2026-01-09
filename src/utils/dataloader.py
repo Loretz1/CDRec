@@ -202,6 +202,9 @@ class TrainDataLoader(AbstractDataLoader):
         else:
             raise NotImplementedError(f"sparse matrix format [{form}] not implemented.")
 
+    def get_modality_embs(self):
+        return self.dataset.modality_embeddings
+
     def _get_sample_func(self):
         """
         功能：

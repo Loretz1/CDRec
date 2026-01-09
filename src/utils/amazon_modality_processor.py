@@ -24,19 +24,35 @@ class AmazonModalityProcessor:
                 line = line.replace(b'true', b'True').replace(b'false', b'False')
                 yield eval(line)
 
-    def _load_raw(self, reviews_path, metadata_path, id_mapping):
+    def _load_raw(self, reviews_path, metadata_path, id_mapping, interaction):
         reviews = {}
         metadata = {}
+
+        # 读取raw的时候需要进行一些筛选，
+        # 去除掉无效user、item
+        # 去掉不在train中的u-i交互，防止处理模态数据时发生数据泄露
+        valid_users = set(id_mapping['user2id'].keys())
+        valid_items = set(id_mapping['item2id'].keys())
+
+        interaction_pairs = set(
+            (id_mapping['id2user'][u], id_mapping['id2item'][i])
+            for u, i in interaction[['user', 'item']].to_numpy()
+        )
+
         for inter in tqdm(self._parse_gz(reviews_path)):
             user = inter['reviewerID']
             item = inter['asin']
             text = inter['reviewText']
-            reviews[(user, item)] = text
-        item_asins = set(id_mapping['src']['item2id'].keys()) | set(id_mapping['tgt']['item2id'].keys())
-        for info in tqdm(self._parse_gz(metadata_path)):
-            if info['asin'] not in item_asins:
+            if user not in valid_users or item not in valid_items:
                 continue
-            metadata[info['asin']] = info
+            if (user, item) not in interaction_pairs:
+                continue
+            reviews[(user, item)] = text
+        for info in tqdm(self._parse_gz(metadata_path)):
+            asin = info.get('asin')
+            if asin not in valid_items:
+                continue
+            metadata[asin] = info
         return reviews, metadata
 
     def _get_modality_handler(self, func_name):
@@ -76,7 +92,7 @@ class AmazonModalityProcessor:
                                             'reviews_' + domain + "_5.json.gz")
                 metadata_path = os.path.join(self.config['data_path'], self.config['dataset'], domain, 'raw',
                                              'meta_' + domain + ".json.gz")
-                self.reviews[role], self.metadata[role] = self._load_raw(reviews_path, metadata_path, self.id_mapping)
+                self.reviews[role], self.metadata[role] = self._load_raw(reviews_path, metadata_path, self.id_mapping[role], self.interaction[role])
 
         func_name = f"extract_{modality['name']}_modality_data"
         handler = self._get_modality_handler(func_name)
