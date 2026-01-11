@@ -100,7 +100,11 @@ class AmazonDataProcessor:
         return item_seqs
 
     def _process_reviews(self, input_path: str) -> Dict:
-        seq_file = os.path.join(self.processed_dir, 'all_item_seqs.json')
+        seq_file = (
+            f"all_item_seqs_"
+            f"{'shuffle' if self.config['shuffle_user_sequence'] else 'noshuffle'}.json"
+        )
+        seq_file = os.path.join(self.processed_dir, seq_file)
 
         if os.path.exists(seq_file):
             logger.info('[DATASET] Reviews have been processed...')
@@ -131,7 +135,7 @@ class AmazonDataProcessor:
         meta_path = self._download_raw('meta')
 
         # 第二步读一下reviews_{domain-name}_5.json.gz
-        # 形成all_item_seqs.json:
+        # 形成all_item_seqs_{shuffle|noshuffle}.json:
         # {
         #   "A1KLRMWW2FWPL4": ["B003U3GOFO", "B009H6NPBE", "B00400N6XE", "..."],
         #   "A2G5TCU2WDFZ65": ["B0019K9WDQ", "B0036FSXI2", "B00B7TBDTU", "..."],

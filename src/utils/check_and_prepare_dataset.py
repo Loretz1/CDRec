@@ -11,10 +11,10 @@ from utils.amazon_modality_processor import AmazonModalityProcessor
 
 logger = getLogger()
 
-def load_all_item_seqs(src_processed_dir, tgt_processed_dir):
-    with open(os.path.join(src_processed_dir, 'all_item_seqs.json'), 'r') as f:
+def load_all_item_seqs(src_processed_dir, tgt_processed_dir, shuffle):
+    with open(os.path.join(src_processed_dir, f'all_item_seqs_{"shuffle" if shuffle else "noshuffle"}.json'), 'r') as f:
         src_all_item_seqs = json.load(f)
-    with open(os.path.join(tgt_processed_dir, 'all_item_seqs.json'), 'r') as f:
+    with open(os.path.join(tgt_processed_dir, f'all_item_seqs_{"shuffle" if shuffle else "noshuffle"}.json'), 'r') as f:
         tgt_all_item_seqs = json.load(f)
     all_item_seqs = {
         "src": src_all_item_seqs,
@@ -308,13 +308,17 @@ def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, join
         return False
 
 def check_and_prepare_Amazon2014_single(config, domain):
-    # 检查是否该域是否缺失all_item_seqs.json
+    # 检查是否该域是否缺失all_item_seqs_{shuffle|noshuffle}.json
     # 如果没有该文件，跑一个AmazonDataProcessor类的run_full_pipeline()生成这个json
     domain_path = os.path.join(config['data_path'], config['dataset'], domain)
     processed_dir = os.path.join(domain_path, 'processed')
+    seq_file = (
+        f"all_item_seqs_"
+        f"{'shuffle' if config['shuffle_user_sequence'] else 'noshuffle'}.json"
+    )
 
     required_files = [
-        os.path.join(processed_dir, 'all_item_seqs.json'),
+        os.path.join(processed_dir, seq_file),
     ]
 
     missing_files = [f for f in required_files if not os.path.exists(f)]
@@ -350,7 +354,8 @@ def create_joint_dataset(domains: List[str], config: dict):
         f"WarmValid{config['warm_valid_ratio']}_"
         f"WarmTest{config['warm_test_ratio']}_"
         f"ColdValid{config['t_cold_valid']}_"
-        f"ColdTest{config['t_cold_test']}"
+        f"ColdTest{config['t_cold_test']}_"
+        f"{'shuffle' if config['shuffle_user_sequence'] else 'noshuffle'}"
     )
     if config['only_overlap_users']:
         split_dir += f'_{config["k_cores"]}cores'
@@ -359,7 +364,7 @@ def create_joint_dataset(domains: List[str], config: dict):
     os.makedirs(os.path.join(joint_path, 'modality_emb'), exist_ok=True)
     logger.info(f"[JOINT] Creating joint dataset: {joint_dataset_name}")
 
-    # 第一步：读入两个域 单域处理好的 all_item_seqs.json
+    # 第一步：读入两个域 单域处理好的 all_item_seqs_{shuffle|noshuffle}.json
     # 如果 Yaml中配置only_overlap_users=True，额外进行一步操作：双域k-cores操作
     # 这个操作会保证： 1.每个用户在每一个域都至少有k个交互物品（因此最终留下的都是重叠用户） 2.每个物品在该域内至少有k个用户交互过
     # 如果only_overlap_users=True，那么数据集只剩下重叠用户了
@@ -367,7 +372,7 @@ def create_joint_dataset(domains: List[str], config: dict):
     logger.info("\n=== STEP 1: Load all_item_seqs from src & tgt ===")
     src_processed_dir = os.path.join(data_path, 'Amazon2014', domains[0], 'processed')
     tgt_processed_dir = os.path.join(data_path, 'Amazon2014', domains[1], 'processed')
-    all_item_seqs = load_all_item_seqs(src_processed_dir, tgt_processed_dir)
+    all_item_seqs = load_all_item_seqs(src_processed_dir, tgt_processed_dir, config['shuffle_user_sequence'])
     if config['only_overlap_users']:
         all_item_seqs = filter_overlap_users(all_item_seqs, config['k_cores'], joint_dataset_name)
 
@@ -430,7 +435,7 @@ def check_and_prepare_Amazon2014(config):
     # 分成两步
     domains = config['domains']
 
-    # 第一步分别单独处理两个域的数据集，下载raw文件，初步处理用户交互数据并保存为all_item_seqs.json，
+    # 第一步分别单独处理两个域的数据集，下载raw文件，初步处理用户交互数据并保存为all_item_seqs_{shuffle|noshuffle}.json，
     # 最终形成如下文件：
     # Amazon2014 /
     # ├── Clothing_Shoes_and_Jewelry /  单域数据集1
@@ -438,13 +443,13 @@ def check_and_prepare_Amazon2014(config):
     # │   │   ├── meta_Clothing_Shoes_and_Jewelry.json.gz
     # │   │   └── reviews_Clothing_Shoes_and_Jewelry_5.json.gz
     # │   └── processed /
-    # │       └── all_item_seqs.json
+    # │       └── all_item_seqs_{shuffle|noshuffle}.json
     # ├── Sports_and_Outdoors /    单域数据集2
     # │   ├── raw /
     # │   │   ├── meta_Sports_and_Outdoors.json.gz
     # │   │   └── reviews_Sports_and_Outdoors_5.json.gz
     # │   └── processed /
-    # │       └── all_item_seqs.json
+    # │       └── all_item_seqs_{shuffle|noshuffle}.json
     # STEP 1: Checking and preparing individual Amazon datasets
     logger.info(f"[TRAINING] Starting parallel data preparation for dataset: Amazon2014, processing domains individually: {domains}")
     with ThreadPoolExecutor(max_workers=len(domains)) as executor:
@@ -476,7 +481,7 @@ def check_and_prepare_Amazon2014(config):
     # Amazon2014 /
     # └── Clothing_Shoes_and_Jewelry + Sports_and_Outdoors /   联合数据集文件夹
     # └── all_users / (或者 only_overlap_users /,  `only_overlap_users`控制该目录)
-    #       └── WarmValid{w_v}_WarmTest{w_t}_ColdValid{c_v}_ColdTest{c_t} /
+    #       └── WarmValid{w_v}_WarmTest{w_t}_ColdValid{c_v}_ColdTest{c_t}_{shuffle|noshuffle}_{kcores} /
     #             ├── train_src.pkl
     #             ├── train_tgt.pkl
     #             ├── valid_warm_tgt.pkl
@@ -502,7 +507,8 @@ def check_and_prepare_Amazon2014(config):
         f"WarmValid{config['warm_valid_ratio']}_"
         f"WarmTest{config['warm_test_ratio']}_"
         f"ColdValid{config['t_cold_valid']}_"
-        f"ColdTest{config['t_cold_test']}"
+        f"ColdTest{config['t_cold_test']}_"
+        f"{'shuffle' if config['shuffle_user_sequence'] else 'noshuffle'}"
     )
     if config['only_overlap_users']:
         split_dir += f'_{config["k_cores"]}cores'

@@ -78,7 +78,8 @@ class RecDataset(object):
             f"WarmValid{config['warm_valid_ratio']}_"
             f"WarmTest{config['warm_test_ratio']}_"
             f"ColdValid{config['t_cold_valid']}_"
-            f"ColdTest{config['t_cold_test']}"
+            f"ColdTest{config['t_cold_test']}_"
+            f"{'shuffle' if config['shuffle_user_sequence'] else 'noshuffle'}"
         )
         if config['only_overlap_users']:
             split_dir += f'_{config["k_cores"]}cores'
