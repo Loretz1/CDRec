@@ -2,12 +2,13 @@ import os
 import json
 import numpy as np
 import pandas as pd
-from typing import Dict, List
+from typing import List
 from logging import getLogger
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from utils.amazon_data_processor import AmazonDataProcessor
-from utils.amazon_modality_processor import AmazonModalityProcessor
+from utils.data_preprocessing.amazon_data_processor import AmazonDataProcessor
+from utils.data_preprocessing.amazon_modality_processor import AmazonModalityProcessor
+from utils.data_preprocessing.douban_data_processor import DoubanDataProcessor
 
 logger = getLogger()
 
@@ -470,9 +471,9 @@ def check_and_prepare_Amazon2014(config):
                 logger.error(f"[ERROR] [{domain_name}] Exception during data preparation: {e}", exc_info=True)
                 results[domain_name] = False
 
-    failed_datasets = [name for name, success in results.items() if not success]
-    if failed_datasets:
-        logger.error(f"[ERROR] Failed to prepare data for datasets: {failed_datasets}")
+    failed_domains = [name for name, success in results.items() if not success]
+    if failed_domains:
+        logger.error(f"[ERROR] Failed to prepare data for domains: {failed_domains}")
         return False
     logger.info(f"[TRAINING] All single-domain datasets are prepared successfully: {list(results.keys())}")
 
@@ -553,6 +554,80 @@ def check_and_prepare_Amazon2014(config):
 
     return True
 
+def check_and_prepare_Douban_single(config, domain):
+    # 检查是否该域是否缺失all_item_seqs_{shuffle|noshuffle}.json
+    # 如果没有该文件，跑一个DoubanDataProcessor类的run_full_pipeline()生成这个json
+    domain_path = os.path.join(config['data_path'], config['dataset'], domain)
+    processed_dir = os.path.join(domain_path, 'processed')
+    seq_file = (
+        f"all_item_seqs_"
+        f"{'shuffle' if config['shuffle_user_sequence'] else 'noshuffle'}.json"
+    )
+
+    required_files = [
+        os.path.join(processed_dir, seq_file),
+    ]
+
+    missing_files = [f for f in required_files if not os.path.exists(f)]
+
+    if missing_files:
+        logger.info(f"[TRAINING] [{domain}] Missing files detected, starting data processing pipeline...")
+        logger.info(f"[TRAINING] [{domain}] Missing files: {missing_files}")
+
+        try:
+            processor = DoubanDataProcessor(config, domain, config['data_path'])
+            processor.run_full_pipeline()   # 生成json文件入口
+            logger.info(f"[TRAINING] [{domain}] Data processing pipeline completed")
+
+            still_missing = [f for f in required_files if not os.path.exists(f)]
+            if still_missing:
+                logger.error(f"[ERROR] [{domain}] Files still missing after processing: {still_missing}")
+                return False
+
+        except Exception as e:
+            logger.error(f"[ERROR] [{domain}] Error during data processing: {e}", exc_info=True)
+            return False
+    else:
+        logger.info(f"[TRAINING] [{domain}] All required data files exist, skipping data processing")
+
+    return True
+
+def check_and_prepare_Douban(config):
+    # 分成两步
+    domains = config['domains']
+
+    # STEP 1: Checking and preparing individual Amazon datasets
+    logger.info(f"[TRAINING] Starting parallel data preparation for dataset: Douban, processing domains individually: {domains}")
+    with ThreadPoolExecutor(max_workers=len(domains)) as executor:
+        # 每个域跑一个 check_and_prepare_Douban_single，进行单域处理
+        future_to_dataset = {
+            executor.submit(check_and_prepare_Douban_single, config, domain): domain
+            for domain in domains
+        }
+
+        results = {}
+        for future in as_completed(future_to_dataset):
+            domain_name = future_to_dataset[future]
+            try:
+                result = future.result()
+                results[domain_name] = result
+                logger.info(f"[TRAINING] [{domain_name}] Data preparation {'completed' if result else 'failed'}")
+            except Exception as e:
+                logger.error(f"[ERROR] [{domain_name}] Exception during data preparation: {e}", exc_info=True)
+                results[domain_name] = False
+
+    failed_domains = [name for name, success in results.items() if not success]
+    if failed_domains:
+        logger.error(f"[ERROR] Failed to prepare data for domains: {failed_domains}")
+        return False
+    logger.info(f"[TRAINING] All single-domain datasets are prepared successfully: {list(results.keys())}")
+
+    # STEP 2: Checking and creating joint Amazon dataset
+
+
+    return True
+
+
 def check_and_prepare_dataset(config):
     """
     数据集检查与构建入口。
@@ -561,3 +636,5 @@ def check_and_prepare_dataset(config):
 
     if dataset == "Amazon2014":
         check_and_prepare_Amazon2014(config)
+    elif dataset == "Douban":
+        check_and_prepare_Douban(config)

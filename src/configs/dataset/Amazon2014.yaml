@@ -2,7 +2,7 @@
 data_path: '../data/'
 
 
-openai_api_key: sk-5f3SltoIrR7FIPSyqL4EJGvp75TzVYxVpCnpfonSxTYttU0k
+openai_api_key: sk-438bAIhTaBeV1rz9WXLEBZ9hVpvKzW9JJqHFHyxwY8YsIJlr
 openai_base_url: https://yunwu.ai/v1
 modalities:
   - name: "sentence"
