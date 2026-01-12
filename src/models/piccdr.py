@@ -17,12 +17,15 @@ class PicCDR(GeneralRecommender):
         self.feature_dim = config['feature_dim']
         self.tau = config['tau']
         self.lambda_dda = config['lambda_dda']
-
+        # one_user_emb
         self.user_emb_src = nn.Embedding(self.num_users_overlap, self.feature_dim)
         self.user_emb_tgt = nn.Embedding(self.num_users_overlap, self.feature_dim)
+        # self.user_emb = nn.Embedding(self.num_users_overlap, self.feature_dim)
+        # one_user_emb
         self.item_emb_src = nn.Embedding(self.num_items_src, self.feature_dim)
         self.item_emb_tgt = nn.Embedding(self.num_items_tgt, self.feature_dim)
 
+        # without_semantic
         semantic_emb = dataloader.get_modality_embs()['PicCDR_semantics']
         semantic_emb = torch.from_numpy(semantic_emb).float()
         assert semantic_emb.shape[0] == self.num_users_overlap * 3
@@ -38,6 +41,7 @@ class PicCDR(GeneralRecommender):
             "semantic_emb_inv",
             semantic_emb[2 * self.num_users_overlap:3 * self.num_users_overlap]
         )
+        # without_semantic
 
         # Transfer Learning Net
         self.transfer_inv = nn.Sequential(
@@ -56,12 +60,14 @@ class PicCDR(GeneralRecommender):
             nn.Linear(self.feature_dim, self.feature_dim)
         )
 
+        # without_semantic
         # 投影语义emb -> id emb
         self.semantic_projector = nn.Sequential(
             nn.Linear(self.semantic_emb_inv.shape[1], self.feature_dim),
             nn.ReLU(),
             nn.Linear(self.feature_dim, self.feature_dim)
         )
+        # without_semantic
 
         self.club_projector = nn.Sequential(
             nn.Linear(self.feature_dim, self.feature_dim),
@@ -116,14 +122,19 @@ class PicCDR(GeneralRecommender):
         tgt_neg = interaction['neg_items_tgt'] - 1
 
         uniq_users, inv_idx = torch.unique(users, return_inverse=True)
+        # one_user_emb
         h_u_src_u = self.user_emb_src(uniq_users)
         h_u_tgt_u = self.user_emb_tgt(uniq_users)
+        # h_u_src_u = self.user_emb(uniq_users)
+        # h_u_tgt_u = self.user_emb(uniq_users)
+        # one_user_emb
         h_cat_u = torch.cat([h_u_src_u, h_u_tgt_u], dim=1)
 
         s_u_inv = self.transfer_inv(h_cat_u)
         s_u_src = self.transfer_src(h_cat_u)
         s_u_tgt = self.transfer_tgt(h_cat_u)
 
+        # without_semantic
         t_inv_proj = self.semantic_projector(self.semantic_emb_inv[uniq_users].detach())
         t_src_proj = self.semantic_projector(self.semantic_emb_sep_src[uniq_users].detach())
         t_tgt_proj = self.semantic_projector(self.semantic_emb_sep_tgt[uniq_users].detach())
@@ -131,6 +142,7 @@ class PicCDR(GeneralRecommender):
         # L_sem
         L_sem = (self.info_nce(s_u_inv, t_inv_proj, self.tau)
                  + self.info_nce(s_u_src, t_src_proj, self.tau) + self.info_nce(s_u_tgt, t_tgt_proj, self.tau))
+        # without_semantic
 
         # L_mul_maxTerm: MI maximization term
         L_mul_maxTerm = self.info_nce(s_u_inv, h_u_src_u, self.tau) + self.info_nce(s_u_inv, h_u_tgt_u, self.tau)
@@ -144,7 +156,12 @@ class PicCDR(GeneralRecommender):
                 self.conditional_club(s_u_inv, h_u_tgt_u, h_u_src_u)
         )
 
-        L_dda = L_sem + L_mul_maxTerm - L_dis - L_mul_minTerm
+        # without_semantic
+        L_dda = (self.config['lambda_sem'] * L_sem + self.config['lambda_mul_maxTerm'] * L_mul_maxTerm -
+                 self.config['lambda_dis'] * L_dis - self.config['lambda_mul_minTerm'] * L_mul_minTerm)
+        # L_dda = self.config['lambda_mul_maxTerm'] * L_mul_maxTerm - self.config['lambda_dis'] * L_dis - \
+        #         self.config['lambda_mul_minTerm'] * L_mul_minTerm
+        # without_semantic
 
         # 下面是推荐损失
         s_inv = s_u_inv[inv_idx]
@@ -172,9 +189,12 @@ class PicCDR(GeneralRecommender):
 
     def full_sort_predict(self, interaction, is_warm):
         user = interaction[0].long() - 1
-
+        # one_user_emb
         h_u_src = self.user_emb_src(user)  # [B, d]
         h_u_tgt = self.user_emb_tgt(user)  # [B, d]
+        # h_u_src = self.user_emb(user)  # [B, d]
+        # h_u_tgt = self.user_emb(user)  # [B, d]
+        # one_user_emb
 
         h_cat = torch.cat([h_u_src, h_u_tgt], dim=1)  # [B, 2d]
 
@@ -389,7 +409,8 @@ def _is_valid_piccdr_json(obj):
 
     return True
 
-def extract_PicCDR_semantics_modality_data(config, modality, interaction, id_mapping, reviews, metadata):
+def extract_PicCDR_semantics_modality_data(config, modality, interaction, id_mapping, raw_data_list):
+    reviews, metadata = raw_data_list
     users_raw_id = id_mapping['src']['id2user'][1:]
 
     users_reviews_src = [[] for _ in range(len(users_raw_id))]

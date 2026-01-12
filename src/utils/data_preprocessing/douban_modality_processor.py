@@ -5,10 +5,19 @@ import json
 import importlib
 from tqdm import tqdm
 import numpy as np
+import tiktoken
 
+_enc = tiktoken.get_encoding("cl100k_base")
 logger = logging.getLogger()
 
-class AmazonModalityProcessor:
+def truncate_to_max_tokens(text, max_tokens=7000):
+    # 防止Text过长
+    tokens = _enc.encode(text)
+    if len(tokens) <= max_tokens:
+        return text
+    return _enc.decode(tokens[:max_tokens])
+
+class DoubanModalityProcessor:
     def __init__(self, config, domains, id_mapping, train_df, joint_path):
         self.config = config
         self.domains = domains
@@ -16,7 +25,8 @@ class AmazonModalityProcessor:
         self.interaction = train_df
         self.joint_path = os.path.join(joint_path, 'modality_emb')
         self.reviews = {}
-        self.metadata = {}
+        self.user_metadata = {}
+        self.item_metadata = {}
 
     def _parse_gz(self, path: str):
         with gzip.open(path, 'r') as g:
@@ -24,9 +34,10 @@ class AmazonModalityProcessor:
                 line = line.replace(b'true', b'True').replace(b'false', b'False')
                 yield eval(line)
 
-    def _load_raw(self, reviews_path, metadata_path, id_mapping, interaction):
+    def _load_raw(self, reviews_path, user_metadata_path, item_metadata_path, id_mapping, interaction):
         reviews = {}
-        metadata = {}
+        user_metadata = {}
+        item_metadata = {}
 
         # 读取raw的时候需要进行一些筛选，
         # 去除掉无效user、item
@@ -40,20 +51,25 @@ class AmazonModalityProcessor:
         )
 
         for inter in tqdm(self._parse_gz(reviews_path)):
-            user = inter['reviewerID']
-            item = inter['asin']
-            text = inter['reviewText']
+            user = inter['uid']
+            item = inter['iid']
+            text = inter['comments']
             if user not in valid_users or item not in valid_items:
                 continue
             if (user, item) not in interaction_pairs:
                 continue
             reviews[(user, item)] = text
-        for info in tqdm(self._parse_gz(metadata_path)):
-            asin = info.get('asin')
-            if asin not in valid_items:
+        for info in tqdm(self._parse_gz(user_metadata_path)):
+            user = info.get('uid')
+            if user not in valid_users:
                 continue
-            metadata[asin] = info
-        return reviews, metadata
+            user_metadata[user] = info
+        for info in tqdm(self._parse_gz(item_metadata_path)):
+            item = info.get('iid')
+            if item not in valid_items:
+                continue
+            item_metadata[item] = info
+        return reviews, user_metadata, item_metadata
 
     def _get_modality_handler(self, func_name):
         # Get the processing method from model
@@ -86,18 +102,21 @@ class AmazonModalityProcessor:
                 modality_data = json.load(f)
             return modality_data
 
-        if self.reviews == {} and self.metadata == {}:
+        if self.reviews == {} and self.user_metadata == {} and self.item_metadata == {}:
             for role, domain in zip(['src', 'tgt'], self.domains):
                 reviews_path = os.path.join(self.config['data_path'], self.config['dataset'], domain, 'raw',
-                                            'reviews_' + domain + "_5.json.gz")
-                metadata_path = os.path.join(self.config['data_path'], self.config['dataset'], domain, 'raw',
-                                             'meta_' + domain + ".json.gz")
-                self.reviews[role], self.metadata[role] = self._load_raw(reviews_path, metadata_path, self.id_mapping[role], self.interaction[role])
+                                            'reviews.json.gz')
+                user_metadata_path = os.path.join(self.config['data_path'], self.config['dataset'], domain, 'raw',
+                                            'user_meta.json.gz')
+                item_metadata_path = os.path.join(self.config['data_path'], self.config['dataset'], domain, 'raw',
+                                            'item_meta.json.gz')
+                self.reviews[role], self.user_metadata[role], self.item_metadata[role] \
+                    = self._load_raw(reviews_path, user_metadata_path, item_metadata_path, self.id_mapping[role], self.interaction[role])
 
         func_name = f"extract_{modality['name']}_modality_data"
         handler = self._get_modality_handler(func_name)
         logger.info(f'[DATASET] Extracting meta: {modality["name"]}...')
-        modality_data = handler(self.config, modality, self.interaction, self.id_mapping, [self.reviews, self.metadata])
+        modality_data = handler(self.config, modality, self.interaction, self.id_mapping, [self.reviews, self.user_metadata, self.item_metadata])
         logger.info(f'[DATASET] Saving modality data: {modality["name"]}..')
         with open(modality_data_path, 'w') as f:
             json.dump(modality_data, f)
@@ -197,15 +216,17 @@ class AmazonModalityProcessor:
                 sentence = clean_text(str(raw))
             return sentence + ' '
 
-        reviews, metadata = raw_data_list
+        reviews, user_metadata, item_metadata = raw_data_list
+
         item2meta = {"src": {}, "tgt": {}}
         for role in ['src', 'tgt']:
-            for item, meta in metadata[role].items():
+            for item, meta in item_metadata[role].items():
                 if item not in id_mapping[role]['item2id'].keys():
                     continue
                 meta_sentence = ''
                 keys = set(meta.keys())
-                features_needed = ['title', 'price', 'brand', 'feature', 'categories', 'description']
+                features_needed = ['labels', 'name', 'director', 'summary', 'writer', 'country', 'pubdate', 'language',
+                                   'rating', 'tag', 'fullname', 'CategoryID']
                 for feature in features_needed:
                     if feature in keys:
                         meta_sentence += _sent_process(meta[feature])
@@ -259,7 +280,10 @@ class AmazonModalityProcessor:
                 sent_embs = []
                 for role in ['src', 'tgt']:
                     for i in tqdm(range(0, len(meta_sentences[role]), modality['emb_batch_size']), desc='Encoding'):
-                        batch = meta_sentences[role][i:i + modality['emb_batch_size']]
+                        batch = [
+                            truncate_to_max_tokens(x, 7000)
+                            for x in meta_sentences[role][i:i + modality['emb_batch_size']]
+                        ]
                         try:
                             responses = client.embeddings.create(
                                 input=batch,

@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils.data_preprocessing.amazon_data_processor import AmazonDataProcessor
 from utils.data_preprocessing.amazon_modality_processor import AmazonModalityProcessor
 from utils.data_preprocessing.douban_data_processor import DoubanDataProcessor
+from utils.data_preprocessing.douban_modality_processor import DoubanModalityProcessor
 
 logger = getLogger()
 
@@ -236,10 +237,13 @@ def split_interation(config, joint_path, all_item_seqs, all_users, id_mapping):
             # 这里如果shuffle_user_sequence=False，用户交互List没有重排序的话，这里最新的交互会被放入valid/test，引入时间信息
             uid = id_mapping['tgt']['user2id'][raw_uid]
             seq_len = len(item_seq)
-            num_test = max(1, int(seq_len * config['warm_test_ratio'])) if config['warm_test_ratio'] else 0
-            num_valid = max(1, int(seq_len * config['warm_valid_ratio'])) if config['warm_valid_ratio'] else 0
+            if seq_len <= 2:  # 如果一个用户的交互太少，那么就把他的交互全放到train中，避免出现train中完全没见过的用户出现在eval中
+                num_train, num_valid, num_test = seq_len, 0, 0
+            else:
+                num_test = max(1, int(seq_len * config['warm_test_ratio'])) if config['warm_test_ratio'] else 0
+                num_valid = max(1, int(seq_len * config['warm_valid_ratio'])) if config['warm_valid_ratio'] else 0
             num_train = seq_len - num_valid - num_test
-            assert num_train > 0
+            assert num_train >= 0
             for raw_iid in item_seq[:num_train]:
                 train_tgt.append([uid, id_mapping['tgt']['item2id'][raw_iid]])
             for raw_iid in item_seq[num_train:num_train + num_valid]:
@@ -284,13 +288,22 @@ def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, join
     logger.info(f"[TRAINING] Start joint modality preparation for domains: {domains}")
 
     try:
-        processor = AmazonModalityProcessor(
-            config=config,
-            domains=domains,              # ["Clothing...", "Sports..."]
-            id_mapping=all_id_mapping,  # {"src": ..., "tgt": ...}
-            train_df=train_df,            # {"src": df, "tgt": df}
-            joint_path=joint_path,
-        )
+        if config['dataset'] == "Amazon2014":
+            processor = AmazonModalityProcessor(
+                config=config,
+                domains=domains,              # ["Clothing...", "Sports..."]
+                id_mapping=all_id_mapping,  # {"src": ..., "tgt": ...}
+                train_df=train_df,            # {"src": df, "tgt": df}
+                joint_path=joint_path,
+            )
+        elif config['dataset'] == "Douban":
+            processor = DoubanModalityProcessor(
+                config=config,
+                domains=domains,              # ["Book", "Movie"]
+                id_mapping=all_id_mapping,  # {"src": ..., "tgt": ...}
+                train_df=train_df,            # {"src": df, "tgt": df}
+                joint_path=joint_path,
+            )
 
         result = processor.run_full_pipeline()
 
@@ -308,44 +321,6 @@ def prepare_modality_emb(config, domains, id_mapping, train_src, train_tgt, join
         )
         return False
 
-def check_and_prepare_Amazon2014_single(config, domain):
-    # 检查是否该域是否缺失all_item_seqs_{shuffle|noshuffle}.json
-    # 如果没有该文件，跑一个AmazonDataProcessor类的run_full_pipeline()生成这个json
-    domain_path = os.path.join(config['data_path'], config['dataset'], domain)
-    processed_dir = os.path.join(domain_path, 'processed')
-    seq_file = (
-        f"all_item_seqs_"
-        f"{'shuffle' if config['shuffle_user_sequence'] else 'noshuffle'}.json"
-    )
-
-    required_files = [
-        os.path.join(processed_dir, seq_file),
-    ]
-
-    missing_files = [f for f in required_files if not os.path.exists(f)]
-
-    if missing_files:
-        logger.info(f"[TRAINING] [{domain}] Missing files detected, starting data processing pipeline...")
-        logger.info(f"[TRAINING] [{domain}] Missing files: {missing_files}")
-
-        try:
-            processor = AmazonDataProcessor(config, domain, config['data_path'])
-            processor.run_full_pipeline()   # 生成json文件入口
-            logger.info(f"[TRAINING] [{domain}] Data processing pipeline completed")
-
-            still_missing = [f for f in required_files if not os.path.exists(f)]
-            if still_missing:
-                logger.error(f"[ERROR] [{domain}] Files still missing after processing: {still_missing}")
-                return False
-
-        except Exception as e:
-            logger.error(f"[ERROR] [{domain}] Error during data processing: {e}", exc_info=True)
-            return False
-    else:
-        logger.info(f"[TRAINING] [{domain}] All required data files exist, skipping data processing")
-
-    return True
-
 def create_joint_dataset(domains: List[str], config: dict):
     # 联合跨域数据集生成逻辑，主要包含四个步骤
     data_path = config['data_path'] if 'data_path' in config else '../data/'
@@ -360,7 +335,7 @@ def create_joint_dataset(domains: List[str], config: dict):
     )
     if config['only_overlap_users']:
         split_dir += f'_{config["k_cores"]}cores'
-    joint_path = os.path.join(data_path, 'Amazon2014', joint_dataset_name, dataset_type, split_dir)
+    joint_path = os.path.join(data_path, config['dataset'], joint_dataset_name, dataset_type, split_dir)
 
     os.makedirs(os.path.join(joint_path, 'modality_emb'), exist_ok=True)
     logger.info(f"[JOINT] Creating joint dataset: {joint_dataset_name}")
@@ -371,8 +346,8 @@ def create_joint_dataset(domains: List[str], config: dict):
     # 如果only_overlap_users=True，那么数据集只剩下重叠用户了
     # 这里也决定了联合跨域数据集目录是all_users（only_overlap_users=False），还是only_overlap_users（only_overlap_users=True）
     logger.info("\n=== STEP 1: Load all_item_seqs from src & tgt ===")
-    src_processed_dir = os.path.join(data_path, 'Amazon2014', domains[0], 'processed')
-    tgt_processed_dir = os.path.join(data_path, 'Amazon2014', domains[1], 'processed')
+    src_processed_dir = os.path.join(data_path, config['dataset'], domains[0], 'processed')
+    tgt_processed_dir = os.path.join(data_path, config['dataset'], domains[1], 'processed')
     all_item_seqs = load_all_item_seqs(src_processed_dir, tgt_processed_dir, config['shuffle_user_sequence'])
     if config['only_overlap_users']:
         all_item_seqs = filter_overlap_users(all_item_seqs, config['k_cores'], joint_dataset_name)
@@ -431,6 +406,44 @@ def create_joint_dataset(domains: List[str], config: dict):
 
     logger.info(f"\n[JOINT] All joint dataset files created successfully!")
     return joint_path
+
+def check_and_prepare_Amazon2014_single(config, domain):
+    # 检查是否该域是否缺失all_item_seqs_{shuffle|noshuffle}.json
+    # 如果没有该文件，跑一个AmazonDataProcessor类的run_full_pipeline()生成这个json
+    domain_path = os.path.join(config['data_path'], config['dataset'], domain)
+    processed_dir = os.path.join(domain_path, 'processed')
+    seq_file = (
+        f"all_item_seqs_"
+        f"{'shuffle' if config['shuffle_user_sequence'] else 'noshuffle'}.json"
+    )
+
+    required_files = [
+        os.path.join(processed_dir, seq_file),
+    ]
+
+    missing_files = [f for f in required_files if not os.path.exists(f)]
+
+    if missing_files:
+        logger.info(f"[TRAINING] [{domain}] Missing files detected, starting data processing pipeline...")
+        logger.info(f"[TRAINING] [{domain}] Missing files: {missing_files}")
+
+        try:
+            processor = AmazonDataProcessor(config, domain, config['data_path'])
+            processor.run_full_pipeline()   # 生成json文件入口
+            logger.info(f"[TRAINING] [{domain}] Data processing pipeline completed")
+
+            still_missing = [f for f in required_files if not os.path.exists(f)]
+            if still_missing:
+                logger.error(f"[ERROR] [{domain}] Files still missing after processing: {still_missing}")
+                return False
+
+        except Exception as e:
+            logger.error(f"[ERROR] [{domain}] Error during data processing: {e}", exc_info=True)
+            return False
+    else:
+        logger.info(f"[TRAINING] [{domain}] All required data files exist, skipping data processing")
+
+    return True
 
 def check_and_prepare_Amazon2014(config):
     # 分成两步
@@ -623,7 +636,64 @@ def check_and_prepare_Douban(config):
     logger.info(f"[TRAINING] All single-domain datasets are prepared successfully: {list(results.keys())}")
 
     # STEP 2: Checking and creating joint Amazon dataset
+    if len(domains) != 2:
+        logger.info("[TRAINING] Single dataset mode, skipping joint dataset creation")
+        return True
+    # 先检查文件是否齐全，包括：
+    # all_users.json、id_mapping.json 这两个json
+    # 六个pkl文件
+    # 每个Yaml配置中Enable = True的模态在modality_emb文件夹中的文件：{modality['name']}_final_emb_{str(modality['emb_pca'])}.npy
+    # 如果少了任何一个，就用create_joint_dataset开始生成
+    data_path = config['data_path'] if 'data_path' in config else '../data/'
+    joint_dataset_name = "+".join(domains)
+    dataset_type = "only_overlap_users" if config['only_overlap_users'] else "all_users"
+    split_dir = (
+        f"WarmValid{config['warm_valid_ratio']}_"
+        f"WarmTest{config['warm_test_ratio']}_"
+        f"ColdValid{config['t_cold_valid']}_"
+        f"ColdTest{config['t_cold_test']}_"
+        f"{'shuffle' if config['shuffle_user_sequence'] else 'noshuffle'}"
+    )
+    if config['only_overlap_users']:
+        split_dir += f'_{config["k_cores"]}cores'
+    joint_path = os.path.join(data_path, 'Amazon2014', joint_dataset_name, dataset_type, split_dir)
 
+    required_joint_files = [
+        os.path.join(joint_path, 'all_users.json'),
+        os.path.join(joint_path, 'id_mapping.json'),
+        os.path.join(joint_path, 'train_src.pkl'),
+        os.path.join(joint_path, 'train_tgt.pkl'),
+        os.path.join(joint_path, 'valid_cold_tgt.pkl'),
+        os.path.join(joint_path, 'test_cold_tgt.pkl'),
+        os.path.join(joint_path, 'valid_warm_tgt.pkl'),
+        os.path.join(joint_path, 'test_warm_tgt.pkl'),
+    ]
+
+    for modality in config['modalities']:
+        if not modality['enabled']:
+            continue
+        final_embs_file_name = modality['name'] + '_final_emb_' + str(modality['emb_pca']) + '.npy'
+        required_joint_files.append(os.path.join(joint_path, 'modality_emb', final_embs_file_name))
+
+    missing_joint_files = [f for f in required_joint_files if not os.path.exists(f)]
+
+    if missing_joint_files:
+        logger.info(f"[TRAINING] One or more joint dataset files are missing. Recreating ALL joint files.")
+        logger.info(f"Missing files: {missing_joint_files}")
+        try:
+            # 这里是联合跨域数据集处理入口
+            create_joint_dataset(domains=domains, config=config)
+
+            still_missing = [f for f in required_joint_files if not os.path.exists(f)]
+            if still_missing:
+                logger.error(f"[ERROR] Joint dataset creation failed, still missing: {still_missing}")
+                return False
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to create joint dataset: {e}", exc_info=True)
+            return False
+    else:
+        logger.info(
+            f"[TRAINING] All required joint dataset files (including embeddings) already exist. Skipping creation.")
 
     return True
 

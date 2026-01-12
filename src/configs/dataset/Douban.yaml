@@ -3,6 +3,18 @@ data_path: '../data/'
 kaggle_api_token: ""
 kaggle_user_name: ""
 
+
+openai_api_key: sk-438bAIhTaBeV1rz9WXLEBZ9hVpvKzW9JJqHFHyxwY8YsIJlr
+openai_base_url: https://yunwu.ai/v1
+modalities:
+  - name: "sentence"
+    emb_model: "text-embedding-3-large"
+    emb_batch_size: 1024
+    emb_dim: 3072
+    emb_pca: 512
+    enabled: false
+
+
 only_overlap_users: True
 k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
 
