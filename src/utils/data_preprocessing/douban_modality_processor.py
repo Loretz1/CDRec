@@ -5,17 +5,8 @@ import json
 import importlib
 from tqdm import tqdm
 import numpy as np
-import tiktoken
 
-_enc = tiktoken.get_encoding("cl100k_base")
 logger = logging.getLogger()
-
-def truncate_to_max_tokens(text, max_tokens=7000):
-    # 防止Text过长
-    tokens = _enc.encode(text)
-    if len(tokens) <= max_tokens:
-        return text
-    return _enc.decode(tokens[:max_tokens])
 
 class DoubanModalityProcessor:
     def __init__(self, config, domains, id_mapping, train_df, joint_path):
@@ -270,6 +261,15 @@ class DoubanModalityProcessor:
 
             try:
                 from openai import OpenAI
+                import tiktoken
+                _enc = tiktoken.get_encoding("cl100k_base")
+
+                def truncate_to_max_tokens(text, max_tokens=7000):
+                    # 防止Text过长
+                    tokens = _enc.encode(text)
+                    if len(tokens) <= max_tokens:
+                        return text
+                    return _enc.decode(tokens[:max_tokens])
 
                 client_kwargs = {'api_key': config['openai_api_key']}
                 if 'openai_base_url' in config and config['openai_base_url']:
