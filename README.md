@@ -537,6 +537,9 @@ training_stages:
     weight_decay: 0.0
 ```
 
+The above example illustrates a typical three-stage training pipeline for cold-start mapping methods:
+source-domain pretraining, target-domain pretraining, and final cross-domain user mapping on overlapped users.
+
 Each training stage must specify the following **required parameters**:
 - `name`: unique identifier of the training stage
 - `state`: data loading mode for this stage
@@ -547,6 +550,7 @@ Each training stage must specify the following **required parameters**:
 - `weight_decay`: weight decay coefficient
 The following parameter is **optional**:
 - `clip_grad_norm`: gradient clipping configuration for stabilizing training
+
 
 ---
 
