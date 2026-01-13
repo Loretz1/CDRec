@@ -609,7 +609,7 @@ def check_and_prepare_Douban(config):
     # 分成两步
     domains = config['domains']
 
-    # STEP 1: Checking and preparing individual Amazon datasets
+    # STEP 1: Checking and preparing individual Douban datasets
     logger.info(f"[TRAINING] Starting parallel data preparation for dataset: Douban, processing domains individually: {domains}")
     with ThreadPoolExecutor(max_workers=len(domains)) as executor:
         # 每个域跑一个 check_and_prepare_Douban_single，进行单域处理
@@ -635,7 +635,7 @@ def check_and_prepare_Douban(config):
         return False
     logger.info(f"[TRAINING] All single-domain datasets are prepared successfully: {list(results.keys())}")
 
-    # STEP 2: Checking and creating joint Amazon dataset
+    # STEP 2: Checking and creating joint Douban dataset
     if len(domains) != 2:
         logger.info("[TRAINING] Single dataset mode, skipping joint dataset creation")
         return True
@@ -656,7 +656,7 @@ def check_and_prepare_Douban(config):
     )
     if config['only_overlap_users']:
         split_dir += f'_{config["k_cores"]}cores'
-    joint_path = os.path.join(data_path, 'Amazon2014', joint_dataset_name, dataset_type, split_dir)
+    joint_path = os.path.join(data_path, 'Douban', joint_dataset_name, dataset_type, split_dir)
 
     required_joint_files = [
         os.path.join(joint_path, 'all_users.json'),
