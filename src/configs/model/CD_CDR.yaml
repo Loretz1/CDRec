@@ -28,7 +28,7 @@ training_stages:
 # 3. Fixed Model Parameters
 embedding_size: 64
 neg_seq_len: 1
-diffuser_type: mlp1
+diffuser_type: self_attention    # ['mlp1','mlp2','self_attention']
 timestep: 2000                    # 200, diffusion steps
 uncon_w: 5                    # 2, the weight of conditioned diffusion in inference phase
 uncon_p: 0.1                    # 0.1, how much prob does train phase use unconditioned diffusion
@@ -40,7 +40,7 @@ n_heads: 4
 n_layers: 1
 mean_pooling: 0                # if using mean pooling, 0: no, 1: yes
 loss_n: bpr                   # bce, bpr, mse, ccl
-log_model_suffix: simple
+log_model_suffix: simple_selfAttention
 
 # 4. Model Hyperparameter Grid Search Setting
 gamma: [0.1,0.5,0.999,1]

@@ -273,7 +273,7 @@ class Trainer(AbstractTrainer):
                     f"🎯 Cold-start Users:\n"
                     + (f"   {mode} Score: {score_cold:.6f} | Best: {best_cold:.6f} "
                        f"| {'✅ Updated' if update_cold else '❌ No Update'} "
-                       f"| {'🛑 Early Stop' if stop_cold else ''}\n" if score_cold else "")
+                       f"| {'🛑 Early Stop' if stop_cold else ''}\n" if score_cold is not None else "")
                     + f"   Metrics:\n{metrics_dict2str(results_cold)}\n"
             )
             eval_output += cold_block
@@ -477,6 +477,8 @@ class Trainer(AbstractTrainer):
                 masked_items = batched_data[1]
                 # mask out pos items
                 scores[masked_items[0], masked_items[1]] = -1e10
+                # mask the item 0 which is PAD
+                scores[:, 0] = -1e10
                 # rank and get top-k
                 _, topk_index = torch.topk(scores, max(self.config['topk']), dim=-1)
                 batch_matrix_list_cold.append(topk_index)

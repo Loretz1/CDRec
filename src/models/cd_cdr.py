@@ -192,6 +192,11 @@ class CD_CDR(GeneralRecommender):
                 nn.GELU(),
                 nn.Linear(self.embedding_size * 2, self.embedding_size)
             )
+        elif self.diffuser_type == 'self_attention':
+            self.ln_diffusion = nn.LayerNorm(self.embedding_size)
+            self.w_q = nn.Linear(self.embedding_size, self.embedding_size)
+            self.w_k = nn.Linear(self.embedding_size, self.embedding_size)
+            self.w_v = nn.Linear(self.embedding_size, self.embedding_size)
         # without_diffusion & diff2mlp
         # for p in self.diffu_mlp.parameters():
         #     p.requires_grad = False
@@ -374,10 +379,34 @@ class CD_CDR(GeneralRecommender):
 
         return x
 
+    def selfAttention(self, features):
+        # features: [bs, #modality(id, text, img, time), d]
+        #         ipdb.set_trace()
+
+        features = self.ln_diffusion(features)
+        q = self.w_q(features)
+        k = self.w_k(features)
+        v = self.w_v(features)
+
+        # 目的就是做这 4 个 token 之间的自注意力融合，让模型学出“当前噪声状态该更多依赖哪种模态/时间信息
+        # [bs, #modality, #modality]
+        attn = q.mul(self.embedding_size ** -0.5) @ k.transpose(-1, -2)
+        attn = attn.softmax(dim=-1)
+
+        features = attn @ v  # [bs, #modality, d]
+        # average pooling
+        y = features.mean(dim=-2)  # [bs, d]
+
+        return y
+
     ## Edit from DreamRec
     def denoise_step(self, x, h, step):
         t = self.step_mlp(step)
-        res = self.diffu_mlp(torch.cat((x, h, t), dim=1))
+        if self.diffuser_type in ("mlp1", "mlp2"):
+            res = self.diffu_mlp(torch.cat((x, h, t), dim=1))
+        elif self.diffuser_type == "self_attention":
+            tokens = torch.stack([x, h, t], dim=1)  # [B, 3, D]
+            res = self.selfAttention(tokens)
         return res
 
     def denoise_uncon(self, x, step):
@@ -386,7 +415,11 @@ class CD_CDR(GeneralRecommender):
 
         t = self.step_mlp(step)
 
-        res = self.diffu_mlp(torch.cat((x, h, t), dim=1))
+        if self.diffuser_type in ("mlp1", "mlp2"):
+            res = self.diffu_mlp(torch.cat((x, h, t), dim=1))
+        elif self.diffuser_type == "self_attention":
+            tokens = torch.stack([x, h, t], dim=1)  # [B, 3, D]
+            res = self.selfAttention(tokens)
         return res
 
     def get_user_representation(self, user, history_item, history_len, user_domain, item_domain):
