@@ -475,24 +475,24 @@ Returns only source-domain interactions, including:
 
 - **TARGET**
 Returns only target-domain interactions, including:
-- `users`: user IDs
-- `pos_items`: positive items in the target domain
-- `neg_items`: negative items in the target domain
+  - `users`: user IDs
+  - `pos_items`: positive items in the target domain
+  - `neg_items`: negative items in the target domain
 
 - **OVERLAP**
 Returns interactions of overlapped users in both domains, including:
-- `users`: overlapped user IDs
-- `pos_items_src`: positive items in the source domain
-- `neg_items_src`: negative items in the source domain
-- `pos_items_tgt`: positive items in the target domain
-- `neg_items_tgt`: negative items in the target domain
+  - `users`: overlapped user IDs
+  - `pos_items_src`: positive items in the source domain
+  - `neg_items_src`: negative items in the source domain
+  - `pos_items_tgt`: positive items in the target domain
+  - `neg_items_tgt`: negative items in the target domain
 
 - **OVERLAP_USER**
 Returns only overlapped user IDs, including:
-- `users_overlapped`: IDs of overlapped users
+  - `users_overlapped`: IDs of overlapped users
 
 
-CDRec supports multi-stage training for cross-domain recommendation models,
+CDRec supports **multi-stage training** for cross-domain recommendation models,
 allowing different training phases to adopt different data loading strategies,
 optimization settings, and training schedules.
 Multi-stage training is fully configured through the `training_stages` field in
@@ -537,7 +537,6 @@ training_stages:
     weight_decay: 0.0
 ```
 
-### Required and Optional Parameters
 Each training stage must specify the following **required parameters**:
 - `name`: unique identifier of the training stage
 - `state`: data loading mode for this stage
