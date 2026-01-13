@@ -410,7 +410,12 @@ def _is_valid_piccdr_json(obj):
     return True
 
 def extract_PicCDR_semantics_modality_data(config, modality, interaction, id_mapping, raw_data_list):
-    reviews, metadata = raw_data_list
+    if config['dataset'] == "Amazon2014":
+        reviews, metadata = raw_data_list
+    elif config['dataset'] == "Douban":
+        reviews = raw_data_list[0]
+        metadata = raw_data_list[2]
+
     users_raw_id = id_mapping['src']['id2user'][1:]
 
     users_reviews_src = [[] for _ in range(len(users_raw_id))]

@@ -59,6 +59,35 @@ are provided in the **Grid Search Details** section.
 
 ## Quick Start
 
+### Command Line Arguments
+All experiments in CDRec are launched via the following command format:
+```bash
+python -u main.py --model <MODEL> --dataset <DATASET> --domains <SRC_DOMAIN> <TGT_DOMAIN>
+```
+These three arguments control **which model is evaluated, on which dataset, and on which pair of domains**.
+
+- `--model` specifies the CDR model to evaluate.
+The model must be implemented in `src/model/<MODEL>.py` and configured in `configs/model/<MODEL>.yaml`.
+- `--dataset` specifies the dataset. Currently supported: `Amazon2014` and `Douban`.
+- `--domains` specifies the source and target domains in the dataset (<SRC_DOMAIN> <TGT_DOMAIN>).
+The first domain is the source domain, the second is the target domain, and **evaluation is always performed on the target domain**
+
+For `Amazon2014`, valid domain names include:
+```text
+Books, Electronics, Movies_and_TV, CDs_and_Vinyl,
+Clothing_Shoes_and_Jewelry, Home_and_Kitchen, Kindle_Store,
+Sports_and_Outdoors, Cell_Phones_and_Accessories,
+Health_and_Personal_Care, Toys_and_Games, Video_Games,
+Tools_and_Home_Improvement, Beauty, Apps_for_Android,
+Office_Products, Pet_Supplies, Automotive,
+Grocery_and_Gourmet_Food, Patio_Lawn_and_Garden, Baby,
+Digital_Music, Musical_Instruments, Amazon_Instant_Video
+```
+For `Douban`, valid domain names are:
+```text
+Book, Movie, Music
+```
+
 ### Typical Warm-Start Evaluation Scenario
 
 All users are **fully overlapped across domains**. During training, the model observes all source-domain interactions
@@ -110,7 +139,7 @@ t_cold_valid: 0.1
 t_cold_test: 0.1
 ```
 
-### Running Examples
+#### Running Examples
 The following command runs a typical cold-start cross-domain recommendation experiment
 on the Amazon2014 dataset, using *Clothing_Shoes_and_Jewelry* as the source domain
 and *Sports_and_Outdoors* as the target domain:
@@ -152,16 +181,16 @@ Amazon2014/
 │   │   ├── meta_Clothing_Shoes_and_Jewelry.json.gz
 │   │   └── reviews_Clothing_Shoes_and_Jewelry_5.json.gz
 │   └── processed/
-│       └── all_item_seqs.json
+│       └── all_item_seqs_{shuffle|noshuffle}.json
 ├── Sports_and_Outdoors/
 │   ├── raw/
 │   │   ├── meta_Sports_and_Outdoors.json.gz
 │   │   └── reviews_Sports_and_Outdoors_5.json.gz
 │   └── processed/
-│       └── all_item_seqs.json
+│       └── all_item_seqs_{shuffle|noshuffle}.json
 ```
 - raw/ contains the original Amazon metadata and review files.
-- `processed/all_item_seqs.json` stores cleaned user–item interaction sequences
+- `processed/all_item_seqs_{shuffle|noshuffle}.json` stores cleaned user–item interaction sequences
   for the corresponding domain, organized as a JSON dictionary:
 ```json
 {
@@ -173,7 +202,9 @@ Amazon2014/
 Each key is a user **raw ID**, and each value is the corresponding list of
 interacted **raw item IDs**. The item sequence is ordered by time by default,
 and is randomly shuffled when `shuffle_user_sequence: True` is specified in
-the YAML configuration.
+the YAML configuration. **This flag also determines the directory suffix
+(`all_item_seqs_shuffle.json` or `all_item_seqs_noshuffle.json`) used to cache
+the processed sequences.**
 
 ### 2. Joint-Domain Preprocessing
 After single-domain preprocessing, CDRec performs joint-domain preprocessing
@@ -184,7 +215,7 @@ Sports_and_Outdoors (target) as an example, the resulting directory structure is
 Amazon2014/
 └── Clothing_Shoes_and_Jewelry+Sports_and_Outdoors/
     └── all_users/ (or only_overlap_users/, controlled by `only_overlap_users`)
-        └── WarmValid{w_v}_WarmTest{w_t}_ColdValid{c_v}_ColdTest{c_t}/
+        └── WarmValid{w_v}_WarmTest{w_t}_ColdValid{c_v}_ColdTest{c_t}_{shuffle|noshuffle}_{kcores}/
             ├── train_src.pkl
             ├── train_tgt.pkl
             ├── valid_warm_tgt.pkl
@@ -198,6 +229,45 @@ Amazon2014/
 Here, {w_v}, {w_t}, {c_v}, and {c_t} are determined by the YAML parameters
 warm_valid_ratio, warm_test_ratio, t_cold_valid, and t_cold_test,
 respectively.
+The `{shuffle|noshuffle}` part is controlled by the `shuffle_user_sequence` parameter:
+- `_shuffle` indicates that user sequences are shuffled before splitting into source and target domains.
+- `_noshuffle` indicates that user sequences are preserved in temporal order, where the source domain contains past interactions and the target domain contains future interactions.
+
+The `{kcores}` suffix is determined by the combination of the `only_overlap_users` and `k_cores` parameters:
+- If `only_overlap_users=true`, the directory name will include the number of cores used for parallel processing (e.g., `_3cores`).
+- If `only_overlap_users=false`, the directory will not include the `kcores` suffix.
+
+**Typical cold-start experiments use all_users/, while typical warm-start experiments use only_overlap_users/.**
+
+Although CDRec always generates six split files
+(`train_src.pkl`, `train_tgt.pkl`, `valid_warm_tgt.pkl`, `test_warm_tgt.pkl`, `valid_cold_tgt.pkl`, `test_cold_tgt.pkl`),
+which files are actually used depends on the evaluation scenario.
+
+**Cold-start setting.**
+CDRec first identifies all overlapped users and then selects a subset of them as cold users.
+Their target-domain interactions are removed from training and split into validation and test sets.
+The model is evaluated on its ability to predict target-domain interactions for these cold users.
+Therefore, only the following files are non-empty and used:
+- `train_src.pkl` (source-domain training data)
+- `train_tgt.pkl` (target-domain training data)
+- `valid_cold_tgt.pkl` (target interactions of validation cold users)
+- `test_cold_tgt.pkl` (target interactions of test cold users)
+
+while `valid_warm_tgt.pkl` and `test_warm_tgt.pkl` are empty.
+
+**Warm-start setting.**
+All non-overlapped users are removed, so all remaining users are warm users with interactions in both domains.
+Their target-domain interactions are split into training, validation, and test sets (typically 8:1:1).
+Therefore, only the following files are non-empty and used:
+- `train_src.pkl` (source-domain training data)
+- `train_tgt.pkl` (target-domain training data)
+- `valid_warm_tgt.pkl` (target interactions for validation)
+- `test_warm_tgt.pkl` (target interactions for testing)
+
+while `valid_cold_tgt.pkl` and `test_cold_tgt.pkl` are empty.
+
+
+---
 
 Joint dataset construction proceeds through four sequential steps:
 1. Load and filter users and items
@@ -206,7 +276,7 @@ Joint dataset construction proceeds through four sequential steps:
 4. Prepare modality embeddings
 
 ####  Step 1: Load Interaction Sequences and Apply Overlap Filtering 
-After loading `all_item_seqs.json` from both the source and target domains,
+After loading `all_item_seqs_{shuffle|noshuffle}.json` from both the source and target domains,
 CDRec determines whether user–item filtering is required according to the YAML
 configuration. When `only_overlap_users: True` is specified, CDRec applies
 dual-domain *k*-core filtering controlled by `k_cores`: each user must have at
@@ -219,67 +289,89 @@ train/validation/test sets while preserving as many users and items as possible.
 According to the value of `only_overlap_users`, the resulting files are stored
 under `all_users/` or `only_overlap_users/`.
 
+**`all_users/` is used for cold-start evaluation, while `only_overlap_users/` is used for warm-start evaluation.**
+
 #### Step 2: Split Users and Reindex IDs
-In Step 2, CDRec splits users into disjoint categories **using raw user IDs**
+In Step 2, CDRec **splits users** into disjoint categories **using raw user IDs**
 according to the YAML parameters `t_cold_valid` and `t_cold_test`, and then
-reindexes users and items to generate integer ID mappings for model training.
-This step produces two files: `all_users.json` and `id_mapping.json`.
+**reindexes** users and items to generate integer ID mappings for model training.
 
 Based on the original user distribution, all users can be categorized into three
 types according to their domain presence: source-only users, target-only users,
-and overlapped users. CDRec then **further splits the original overlapped users**
-into multiple subsets according to the YAML parameters `t_cold_valid` and
-`t_cold_test`.
+and overlapped users. **Under the cold-start evaluation scenario**, CDRec then**further 
+splits the original overlapped users** into multiple subsets according to 
+the YAML parameters `t_cold_valid` and `t_cold_test`.
 
 Specifically, a proportion of overlapped users is sampled and reassigned as
 `valid_cold_users` and `test_cold_users`, while the remaining overlapped users
-are kept as `overlap_users`. The sampled users are treated as **source-only users
-during training**, and their target-domain interactions are reserved for
-cold-start evaluation.
+are kept as `overlap_users`. The target-domain interactions of `valid_cold_users` 
+and `test_cold_users` are reserved exclusively for evaluation and are never used 
+during training.
 Together with the original source-only and target-only users, this process
 produces five **mutually exclusive** user groups:
 
+
+**An example of User Splitting in the Warm-Start Scenario:**
 ```json
 {
-  "overlap_users": ["A17LPGJKVMUR94", "A17LPLXKKEAK5H", "A18F6EPN8MVV3Q", "..."],
-  "valid_cold_users": ["A1CTAGLV73QYH8", "A1I0ET8C0DHJ8G", "A1KY25HG3D9NWB", "..."],
-  "test_cold_users": ["A1MYQRCX4M9NHZ", "A1Q94N7L9E4HLJ", "..."],
-  "src_only_users": ["A27I8ETYT41602", "A1XLIWO29Y9P8G", "A2EN82VBJT44QP", "..."],
+  "overlap_users": ["A036147939NFPC389VLK", "A100L918633LUO", "A100WFKYVRPVX7", "..."],
+  "valid_cold_users": [],
+  "test_cold_users": [],
+  "src_only_users": [],
+  "tgt_only_users": []
+}
+```
+**An example of User Splitting in the Cold-Start Scenario:**
+```json
+{
+  "overlap_users": ["A021943320Y3C5B58IY79", "A036147939NFPC389VLK", "..."],
+  "valid_cold_users": ["A00046902LP5YSDV0VVNF", "A0029274J35Q1MYNKUWO", "..."],
+  "test_cold_users": ["A11GCF3KECY6HO", "A11GF0R6HVHDJG", "..."],
+  "src_only_users": ["A001114613O3F18Q5NVR6", "A00146182PNM90WNNAZ5Q", "..."],
   "tgt_only_users": ["A2PAFNZ5D4J4WN", "A2S26YGSVXBCFL", "..."]
 }
 ```
 These five user sets are disjoint, and their union forms the complete user set.
-**_After reindexing raw user IDs_** using the mappings defined in `id_mapping.json`,
-these user groups are saved to `all_users.json` with internal integer user IDs.
+They are saved in `all_users.json` after raw string user IDs 
+are reindexed into internal integer IDs according to `id_mapping.json`.
 
 CDRec also generates `id_mapping.json` to map raw user/item IDs to consecutive
 integer IDs for model training:
-```json
-{
-  "src": {
-    "user2id": { "raw_user_id": 1, "...": "..." },
-    "id2user": ["[PAD]", "raw_user_id", "..."],
-    "item2id": { "raw_item_id": 1, "...": "..." },
-    "id2item": ["[PAD]", "raw_item_id", "..."]
-  },
-  "tgt": {
-    "user2id": { "raw_user_id": 1, "...": "..." },
-    "id2user": ["[PAD]", "..."],
-    "item2id": { "raw_item_id": 1, "...": "..." },
-    "id2item": ["[PAD]", "..."]
-  }
-}
-```
-For user indexing, CDRec builds domain-specific user vocabularies:
+
+For user indexing, CDRec builds domain-specific user vocabularies,
+with users indexed separately in the source and target domains:
 - **Source-domain users** include: `overlap_users`, `valid_cold_users`,
   `test_cold_users`, and `src_only_users` (4 groups).
 - **Target-domain users** include: `overlap_users` and `tgt_only_users`
   (2 groups).
 
-User and item IDs are indexed **separately for each domain**, starting from 1.
-Overlapped users are assigned consistent IDs in both domains and occupy the
-leading index range `1 ... num_overlap_users`, while domain-specific users are
-indexed afterward within each domain.
+User and item IDs are indexed **separately for each domain**, starting from 1, following the ordered user groups defined above.
+In the source domain, users are indexed in the order `overlap_users → valid_cold_users → test_cold_users → src_only_users`, 
+while in the target domain they are indexed as `overlap_users → tgt_only_users`.
+**Overlapped users are assigned identical ID ranges in both domains (`1 ... num_overlap_users`)
+to ensure that the same user has consistent indices across domains.**
+
+**An Example of ID Reindexing under Warm- and Cold-Start Scenarios:**
+```json
+{
+  "src": {
+    "user2id": { "A021943320Y3C5B58IY79": 1, "A036147939NFPC389VLK": 2, "...": "..." },
+    "id2user": ["[PAD]", "A021943320Y3C5B58IY79", "A036147939NFPC389VLK", "..."],
+    "item2id": {"0000031887": 1, "0123456479": 2, "...": "..." },
+    "id2item": ["[PAD]", "0000031887", "0123456479", "..."]
+  },
+  "tgt": {
+    "user2id": { "A021943320Y3C5B58IY79": 1, "A036147939NFPC389VLK": 2, "...": "..." },
+    "id2user": ["[PAD]", "A021943320Y3C5B58IY79", "A036147939NFPC389VLK", "..."],
+    "item2id": { "1881509818": 1, "2094869245": 2, "...": "..." },
+    "id2item": ["[PAD]", "1881509818", "2094869245", "..."]
+  }
+}
+```
+
+In this example, `id2user` is implemented as a list rather than a dictionary 
+so that direct indexing can be used: id2user[1] = "A021943320Y3C5B58IY79" means that the raw user ID "A021943320Y3C5B58IY79" is mapped to internal ID 1.
+By convention, id2user[0] = "PAD", so that all valid user IDs start from 1 and index 0 is reserved for padding.
 
 #### Step 3: Split Interactions into Train / Validation / Test Sets
 
@@ -297,27 +389,14 @@ format. Each file contains a pandas DataFrame with the following columns:
 ```
 where user and item are reindexed integer IDs defined in `id_mapping.json`.
 
-The generated files contain interactions from different domains and user groups
-as follows.
+Note that in the warm-start evaluation scenario, only `train_src.pkl`, `train_tgt.pkl`,
+`valid_warm_tgt.pkl`, and `test_warm_tgt.pkl` are non-empty and used,
+while `valid_cold_tgt.pkl` and `test_cold_tgt.pkl` are empty.
 
-- **`train_src.pkl`** stores **all source-domain interactions** of all users,
-  including `overlap_users`, `valid_cold_users`, `test_cold_users`, and
-  `src_only_users`. All source-domain interactions are used exclusively for
-  training and are not split into validation or test sets.
+In the cold-start evaluation scenario, only `train_src.pkl`, `train_tgt.pkl`, 
+`valid_cold_tgt.pkl`, and `test_cold_tgt.pkl` are non-empty and used,
+while `valid_warm_tgt.pkl` and `test_warm_tgt.pkl` are empty.
 
-- For the **target domain**, users are handled differently based on their user
-  type:
-  - **Warm users** (`overlap_users` and
-    `tgt_only_users`): their target-domain interaction sequences are split
-    sequentially into training, validation, and test sets according to the YAML
-    parameters `warm_valid_ratio` and `warm_test_ratio`. The resulting
-    interactions are saved to `train_tgt.pkl`, `valid_warm_tgt.pkl`, and
-    `test_warm_tgt.pkl`, respectively.
-  - **Cold users** (`valid_cold_users` and `test_cold_users`): all of their
-    target-domain interactions are held out from training and are saved entirely
-    to `valid_cold_tgt.pkl` and `test_cold_tgt.pkl`, respectively, for cold-start
-    evaluation.
-  
 It is important to note that all validation and test sets are constructed exclusively for the target domain.
 
 #### Step 4: Prepare Modality Embeddings
@@ -334,9 +413,9 @@ modality_emb/
 ```
 These files store the corresponding metadata, the raw modality embeddings and the post-processed (e.g., PCA)
 embeddings, respectively. Modalities with
-enabled: false are skipped and no files are generated.
+`enabled: false` are skipped and no files are generated.
 
-For each enabled modality, CDRec processes the modality data
+For each `enabled` modality, CDRec processes the modality data
 through three sequential functions, each responsible for generating one of
 the modality-related files:
 ```text
@@ -376,6 +455,43 @@ without modifying the core preprocessing pipeline.
 
 ## Multi-stage Training Details
 
+CDRec provides multiple data loading modes for cross-domain recommendation,
+which determine which users and interactions are returned by the dataloader in each training iteration.
+The following data loading modes are supported:
+- **BOTH**
+Returns interactions from both source and target domains, including:
+  - `users_src`: user IDs for source-domain interactions
+  - `pos_items_src`: positive items in the source domain
+  - `neg_items_src`: negative items in the source domain
+  - `users_tgt`: user IDs for target-domain interactions
+  - `pos_items_tgt`: positive items in the target domain
+  - `neg_items_tgt`: negative items in the target domain
+
+- **SOURCE**
+Returns only source-domain interactions, including:
+  - `users`: user IDs
+  - `pos_items`: positive items in the source domain
+  - `neg_items`: negative items in the source domain
+
+- **TARGET**
+Returns only target-domain interactions, including:
+- `users`: user IDs
+- `pos_items`: positive items in the target domain
+- `neg_items`: negative items in the target domain
+
+- **OVERLAP**
+Returns interactions of overlapped users in both domains, including:
+- `users`: overlapped user IDs
+- `pos_items_src`: positive items in the source domain
+- `neg_items_src`: negative items in the source domain
+- `pos_items_tgt`: positive items in the target domain
+- `neg_items_tgt`: negative items in the target domain
+
+- **OVERLAP_USER**
+Returns only overlapped user IDs, including:
+- `users_overlapped`: IDs of overlapped users
+
+
 CDRec supports multi-stage training for cross-domain recommendation models,
 allowing different training phases to adopt different data loading strategies,
 optimization settings, and training schedules.
@@ -384,7 +500,7 @@ the model configuration file `configs/model/<model_name>.yaml`.
 
 **Only the final training stage performs evaluation and early stopping**;
 all preceding stages are executed as pure training phases without validation
-or test-time performance monitoring.
+or test performance monitoring.
 
 Accordingly, each model implementation (`<model>.py`) must implement
 `set_train_stage(stage)` to control which model parameters are trainable
@@ -432,59 +548,6 @@ Each training stage must specify the following **required parameters**:
 - `weight_decay`: weight decay coefficient
 The following parameter is **optional**:
 - `clip_grad_norm`: gradient clipping configuration for stabilizing training
-
-The `state` parameter determines **which interactions or users are returned by
-the dataloader** in the current training stage. CDRec supports the following
-modes:
-- **BOTH**
-Return interactions from both source and target domains:
-```yaml
-{
-    "users_src":     LongTensor [batch_size],
-    "pos_items_src": LongTensor [batch_size],
-    "neg_items_src": LongTensor [batch_size],
-    "users_tgt":     LongTensor [batch_size],
-    "pos_items_tgt": LongTensor [batch_size],
-    "neg_items_tgt": LongTensor [batch_size]
-}
-```
-- **SOURCE**
-Return only source-domain interactions.
-```yaml
-{
-    "users":     LongTensor [batch_size],
-    "pos_items": LongTensor [batch_size],
-    "neg_items": LongTensor [batch_size]
-}
-```
-- **TARGET**
-Return only target-domain interactions.
-```yaml
-{
-    "users":     LongTensor [batch_size],
-    "pos_items": LongTensor [batch_size],
-    "neg_items": LongTensor [batch_size]
-}
-```
-- **OVERLAP**
-Return interactions of overlapped users in both domains.
-```yaml
-{
-    "users":          LongTensor [batch_size],
-    "pos_items_src":  LongTensor [batch_size],
-    "neg_items_src":  LongTensor [batch_size],
-    "pos_items_tgt":  LongTensor [batch_size],
-    "neg_items_tgt":  LongTensor [batch_size]
-}
-```
-- **OVERLAP_USER**
-Return only the IDs of overlapped users, typically used for
-user-mapping or alignment objectives.
-```yaml
-{
-    "users_overlapped": LongTensor [batch_size]
-}
-```
 
 ---
 

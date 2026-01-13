@@ -21,7 +21,7 @@ training_stages:
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [ 0.001, 0.01]
+    learning_rate: [0.01]
     learning_rate_scheduler: [1.0, 50]
     weight_decay: 0
 
@@ -35,13 +35,22 @@ modalities:
 
 # 3. Fixed Model Parameters Setting
 feature_dim: 64
-tau: [0.01, 0.05, 0.1, 0.2, 0.5, 1]
-lambda_dda: [0.1, 0.5, 1, 1.5, 3.0]
+#log_model_suffix: without_semantic
 
 # 4. Model Hyperparameter Grid Search Setting
+tau: [ 0.2 ]
+lambda_dda: [ 0, 0.1, 0.5, 1, 1.5 ]
+lambda_sem: [0.3, 1]
+lambda_mul_maxTerm: [ 0,0.1,0.3,1 ]
+lambda_dis: [ 0,0.1, 0.3,1 ]
+lambda_mul_minTerm: [ 0,0.1, 0.3,1 ]
 
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.0.learning_rate"
   - "tau"
   - "lambda_dda"
+  - 'lambda_sem'
+  - "lambda_mul_maxTerm"
+  - "lambda_dis"
+  - "lambda_mul_minTerm"
