@@ -1,16 +1,15 @@
 # Overwrite Dataset Setting
-only_overlap_users: True
+only_overlap_users: False # Whether to construct a fully-overlapped (warm-start) or partially-overlapped (cold-start) user set
 k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
 shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
-warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
-warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
-t_cold_valid: 0 # cold user in the target domain valid set
-t_cold_test: 0 # cold user in the target domain test set
+warm_valid_ratio: 0 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
+warm_test_ratio: 0 # Ratio of interactions from warm users in the target domain to be assigned to the test set
+t_cold_valid: 0.1 # cold user in the target domain valid set
+t_cold_test: 0.1 # cold user in the target domain test set
 
 # 1. Eval Setting
-warm_eval: True  # Whether to enable warm user evaluation
-overlapped_users_for_warm_eval: True # Warm evaluation is performed only after filtering users that exist in both domains (overlapped users).
-cold_start_eval: False # Whether to enable cold start user evaluation
+warm_eval: False  # Whether to enable warm user evaluation
+cold_start_eval: True # Whether to enable cold start user evaluation
 
 # 2. Multi-stage Training Setting
 # (state, epochs, train_batch_size, learner, learning_rate, learning_rate_scheduler, weight_decay) is required for each stage
@@ -31,11 +30,12 @@ dropout: 0.3
 lambda_a: 0.5
 # 4. Model Hyperparameter Grid Search Setting
 history_len: [ 10, 20 ,40 ]
+#history_len: [ 100, 80 ,60 ]
 aggregator: [ 'mean' , 'user_attention']
 mask_rate: [ 0.2, 0.4 ]
 lambda_loss: [ 0.2, 0.5, 0.8 ]
 #lambda_loss: [ 1 ]
-log_model_suffix: warm
+#log_model_suffix: warm
 
 # hyperparameter search space
 hyper_parameters:

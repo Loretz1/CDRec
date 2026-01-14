@@ -87,6 +87,7 @@ class CUT_MF(GeneralRecommender):
         loss_tgt = -torch.log(torch.sigmoid(pos_score_t - neg_score_t)).mean()
 
         # L_c
+        # without_contrastive_loss
         users_tgt_unique = torch.unique(users_tgt)
         users_tgt_all_unique = torch.where(
             users_tgt_unique < Uo,
@@ -109,10 +110,14 @@ class CUT_MF(GeneralRecommender):
         exp_sim = torch.exp(sim_cur / tau)
         log_prob = sim_cur / tau - torch.log(exp_sim.sum(dim=1, keepdim=True))
         loss_c = -(pos_mask * log_prob).sum() / (pos_mask.sum() + 1e-8)
+        # without_contrastive_loss
 
         alpha = self.config['alpha']
         lambda_c = self.config['lambda']
+        # without_contrastive_loss
         loss = alpha * loss_src + (1 - alpha) * loss_tgt + lambda_c * loss_c
+        # loss = alpha * loss_src + (1 - alpha) * loss_tgt
+        # without_contrastive_loss
         return loss
 
     def calculate_loss(self, interaction, epoch_idx):

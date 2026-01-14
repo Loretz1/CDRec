@@ -7,10 +7,10 @@ systematic evaluation under different settings.
 
 CDRec focuses on two representative evaluation protocols, both of which
 evaluate recommendation performance **exclusively on the target domain**:
-- **Warm-start CDR**: all users are shared across domains; training uses both source-
+- **Warm-start CDR (Intra domain)**: all users are shared across domains; training uses both source-
   and target-domain interactions, while evaluation is conducted only on held-out
   target-domain interactions.
-- **Cold-start CDR**: only a subset of users overlap across domains; cold-start users
+- **Cold-start CDR (Inter domain)**: only a subset of users overlap across domains; cold-start users
   have no target-domain interactions during training, and evaluation measures their
   recommendation performance on the target domain.
 
@@ -28,10 +28,14 @@ the resulting evaluation scenario. All preprocessing options are specified via
 YAML files to ensure reproducibility and flexibility.
 
 CDRec provides two configurable YAML files for **Dataset Setting**:
-- **Model configuration (High Priority)**:  
+- **Model configuration (High Priority, model-specific dataset configuration)**:  
   `configs/model/<model_name>.yaml`
-- **Dataset configuration (Low Priority)**:  
-  `configs/dataset/Amazon2014.yaml`
+- **Dataset configuration (Low Priority, default dataset configuration)**:  
+  `configs/dataset/<dataset>.yaml`
+
+**We recommend specifying dataset settings in the model configuration
+(`configs/model/<model_name>.yaml`), since it overrides `<dataset>.yaml` and enables
+model-specific dataset configurations.**
 
 **Detailed explanations of the dataset preprocessing options** in these YAML files
 are provided in the **Dataset Preprocessing Details** section below.
@@ -72,6 +76,9 @@ The model must be implemented in `src/model/<MODEL>.py` and configured in `confi
 - `--domains` specifies the source and target domains in the dataset (<SRC_DOMAIN> <TGT_DOMAIN>).
 The first domain is the source domain, the second is the target domain, and **evaluation is always performed on the target domain**
 
+
+### Available Domains in a Dataset
+
 For `Amazon2014`, valid domain names include:
 ```text
 Books, Electronics, Movies_and_TV, CDs_and_Vinyl,
@@ -88,92 +95,205 @@ For `Douban`, valid domain names are:
 Book, Movie, Music
 ```
 
-### Typical Warm-Start Evaluation Scenario
 
-All users are **fully overlapped across domains**. During training, the model observes all source-domain interactions
-and a subset of target-domain interactions. Evaluation is conducted only on **target domain**.
+### Quick Start for Models under Different Evaluation Scenarios
 
-To run warm-start evaluation, make sure the following settings are correctly configured
-in the YAML file:
-```yaml
-only_overlap_users: True
-k_cores: 3
-shuffle_user_sequence: True
-warm_valid_ratio: 0.1
-warm_test_ratio: 0.1
-t_cold_valid: 0
-t_cold_test: 0
+The following models in CDRec are designed for the **warm-start CDR setting**,
+where all users are shared across domains and the model leverages
+**both source- and target-domain interactions** to improve
+target-domain recommendation.
+
+```text
+Base, LightGCN, DisenCDR, GDCCDR, CUT, CUT_MF, PicCDR
 ```
 #### Running Examples
+
 The following command runs a typical warm-start cross-domain recommendation experiment
 on the Amazon2014 dataset, using *Clothing_Shoes_and_Jewelry* as the source domain
 and *Sports_and_Outdoors* as the target domain:
+
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -u main.py --model DisenCDR --dataset Amazon2014 --domains Clothing_Shoes_and_Jewelry Sports_and_Outdoors
 ```
+
 The corresponding dataset setting for warm-start evaluation is specified in
 `configs/model/DisenCDR.yaml`.
+
 To reverse the source and target domains, exchange their order in the
 `--domains` argument. For example:
+
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -u main.py --model DisenCDR --dataset Amazon2014 --domains Sports_and_Outdoors Clothing_Shoes_and_Jewelry
 ```
 
 ---
 
-### Typical Cold-Start Evaluation Scenario
-
-Users are **partially overlapped across domains**. Cold-start users are
-observed only in the source domain during training, with no target-domain
-interactions. Evaluation is performed on interactions between these cold-start users and target-domain items.
-
-To run cold-start evaluation, make sure the following settings are correctly configured
-in the YAML file:
-```yaml
-only_overlap_users: False
-k_cores: 3
-shuffle_user_sequence: True
-warm_valid_ratio: 0
-warm_test_ratio: 0
-t_cold_valid: 0.1
-t_cold_test: 0.1
+The following models in CDRec are designed for the **cold-start CDR setting**,
+where only a subset of users overlap across domains and the model predicts
+target-domain preferences for **cold users** who have no target-domain
+interactions during training.
+```text
+EMCDR, CDRIB, PTUPCDR, Disco, DMCDR, DiffCDR
 ```
-
 #### Running Examples
 The following command runs a typical cold-start cross-domain recommendation experiment
 on the Amazon2014 dataset, using *Clothing_Shoes_and_Jewelry* as the source domain
 and *Sports_and_Outdoors* as the target domain:
+
+
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -u main.py --model EMCDR --dataset Amazon2014 --domains Clothing_Shoes_and_Jewelry Sports_and_Outdoors
 ```
+
 The corresponding dataset setting for cold-start evaluation is specified in
 `configs/model/EMCDR.yaml`.
-To reverse the source and target domains, exchange their order in the
-`--domains` argument. For example:
-```bash
-CUDA_VISIBLE_DEVICES=0 python -u main.py --model EMCDR --dataset Amazon2014 --domains Sports_and_Outdoors Clothing_Shoes_and_Jewelry
-```
+
 ---
+
+The following models in CDRec support **both warm-start and cold-start CDR settings**
+and can be evaluated under different **dataset settings** using the same model.
+
+
+```text
+UniCDR, CD_CDR
+```
+
+#### Running Examples
+
+The following command runs an evaluation using UniCDR on Amazon2014.
+By changing the **dataset settings** in `configs/model/UniCDR.yaml`,
+the same model can be evaluated under different CDR scenarios.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -u main.py --model UniCDR --dataset Amazon2014 --domains Clothing_Shoes_and_Jewelry Sports_and_Outdoors
+```
+
+**To run under the warm-start setting**, configure `configs/model/UniCDR.yaml` as:
+```yaml
+only_overlap_users: True # Whether to construct a fully-overlapped (warm-start) or partially-overlapped (cold-start) user set
+k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
+shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
+warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
+warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
+t_cold_valid: 0 # cold user in the target domain valid set
+t_cold_test: 0 # cold user in the target domain test set
+
+warm_eval: True  # Whether to enable warm user evaluation
+cold_start_eval: False # Whether to enable cold start user evaluation
+```
+
+**To run under the cold-start setting**, configure `configs/model/UniCDR.yaml` as:
+```yaml
+only_overlap_users: False # Whether to construct a fully-overlapped (warm-start) or partially-overlapped (cold-start) user set
+k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
+shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
+warm_valid_ratio: 0 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
+warm_test_ratio: 0 # Ratio of interactions from warm users in the target domain to be assigned to the test set
+t_cold_valid: 0.1 # cold user in the target domain valid set
+t_cold_test: 0.1 # cold user in the target domain test set
+
+warm_eval: False  # Whether to enable warm user evaluation
+cold_start_eval: True # Whether to enable cold start user evaluation
+```
+
+---
+
 
 ## Dataset Preprocessing Details
 
+### Dataset Construction under Different Evaluation Scenarios
 This section describes the end-to-end dataset preprocessing pipeline used in CDRec.
 We take Amazon2014 as an example, with Clothing_Shoes_and_Jewelry as the source
 domain and Sports_and_Outdoors as the target domain, to illustrate how raw data
 are transformed into ready-to-use benchmark datasets.
 
-Overall, dataset preprocessing in CDRec consists of two stages:
-1. Single-domain preprocessing, where each domain is processed independently
-2. Joint-domain preprocessing, where cross-domain user alignment and data splitting
-are performed according to the specified evaluation setting
+Overall, dataset preprocessing in CDRec is **scenario-dependent**.
+Different evaluation settings (warm-start vs. cold-start) require
+different user filtering, user splitting, and interaction partitioning.
+By configuring the **dataset settings in YAML**, CDRec constructs
+different benchmark datasets from the same raw data to support
+different evaluation scenarios.
 
-### 1. Single-Domain Preprocessing
-Each domain is first processed independently from raw Amazon review data.
+
+The following dataset-related configuration options control both
+**dataset construction** and **evaluation activation**:
+```yaml
+# Dataset Setting
+only_overlap_users
+k_cores
+shuffle_user_sequence
+warm_valid_ratio
+warm_test_ratio
+t_cold_valid
+t_cold_test
+
+# Eval Setting
+warm_eval
+cold_start_eval
+```
+
+These options jointly determine which users are kept,
+how interactions are split,
+and which evaluation protocol is enabled.
+
+In the following, we separately describe the dataset configurations
+and preprocessing pipelines for the **warm-start** **and cold-start**
+evaluation scenarios.
+
+---
+
+### Warm-Start Dataset Construction
+
+
+A typical warm-start evaluation scenario keeps **only overlapped users**
+and splits their target-domain interactions into training, validation,
+and test sets.
+
+A typical warm-start dataset configuration is:
+```yaml
+only_overlap_users: True # For warm-start scenarios, this must be True.
+k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
+shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
+warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
+warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
+t_cold_valid: 0 # For warm-start scenarios, this must be 0.
+t_cold_test: 0 # For warm-start scenarios, this must be 0.
+
+warm_eval: True  # For warm-start scenarios, this must be True.
+cold_start_eval: False # For warm-start scenarios, this must be False.
+```
+
+In this configuration, the first seven parameters control **dataset construction**
+(i.e., user filtering, interaction splitting),
+while the last two parameters (`warm_eval` and `cold_start_eval`) control
+which **evaluation protocol** is enabled.
+For warm-start experiments, `warm_eval` is set to `True` and
+`cold_start_eval` is set to `False`, meaning that only warm-user evaluation
+is performed.
+
+Overall, dataset preprocessing consists of two stages:
+
+1. Single-domain preprocessing, where each domain is processed independently.
+2. Joint-domain preprocessing, where cross-domain user alignment and data splitting
+   are performed according to the warm evaluation setting.
+
+### 1. Single-Domain Preprocessing for Warm-Start Scenarios
+
+Single-domain preprocessing is affected by `shuffle_user_sequence`,
+which controls whether user interaction sequences are randomly shuffled 
+and determines the corresponding cached file
+(`all_item_seqs_shuffle.json` or `all_item_seqs_noshuffle.json`).
+
+Each domain is processed independently from raw Amazon review data.
 If the required raw files are not found locally, CDRec will automatically
 download the corresponding Amazon review and metadata files and place them
 under the `raw/` directory.
+
 For each domain, CDRec maintains a separate directory containing raw files and
-processed interaction sequences.
+processed interaction sequences:
+
+
+
 ```text
 Amazon2014/
 ├── Clothing_Shoes_and_Jewelry/
@@ -189,9 +309,12 @@ Amazon2014/
 │   └── processed/
 │       └── all_item_seqs_{shuffle|noshuffle}.json
 ```
-- raw/ contains the original Amazon metadata and review files.
+
+- raw/ contains the original Amazon item metadata and user-item review files.
 - `processed/all_item_seqs_{shuffle|noshuffle}.json` stores cleaned user–item interaction sequences
   for the corresponding domain, organized as a JSON dictionary:
+
+
 ```json
 {
   "A1KLRMWW2FWPL4": ["B003U3GOFO", "B009H6NPBE", "B00400N6XE", "..."],
@@ -199,117 +322,105 @@ Amazon2014/
   "A1RLQXYNCMWRWN": ["B0007YVP1W", "B004LXVIDK", "B000LSWXWO", "..."]
 }
 ```
+
 Each key is a user **raw ID**, and each value is the corresponding list of
 interacted **raw item IDs**. The item sequence is ordered by time by default,
-and is randomly shuffled when `shuffle_user_sequence: True` is specified in
+and is randomly shuffled when <span style="color:#7AAEF7;">shuffle_user_sequence: True</span> is specified in
 the YAML configuration. **This flag also determines the directory suffix
 (`all_item_seqs_shuffle.json` or `all_item_seqs_noshuffle.json`) used to cache
 the processed sequences.**
 
-### 2. Joint-Domain Preprocessing
+### 2. Joint-Domain Preprocessing for Warm-Start Scenarios
+
 After single-domain preprocessing, CDRec performs joint-domain preprocessing
 for a specific source–target domain pair.
 Using Amazon2014 with Clothing_Shoes_and_Jewelry (source) and
-Sports_and_Outdoors (target) as an example, the resulting directory structure is:
+Sports_and_Outdoors (target) as an example, the resulting **warm-start**
+dataset directory structure is:
+
 ```text
 Amazon2014/
 └── Clothing_Shoes_and_Jewelry+Sports_and_Outdoors/
-    └── all_users/ (or only_overlap_users/, controlled by `only_overlap_users`)
+    └── only_overlap_users/
         └── WarmValid{w_v}_WarmTest{w_t}_ColdValid{c_v}_ColdTest{c_t}_{shuffle|noshuffle}_{kcores}/
             ├── train_src.pkl
             ├── train_tgt.pkl
             ├── valid_warm_tgt.pkl
             ├── test_warm_tgt.pkl
-            ├── valid_cold_tgt.pkl
-            ├── test_cold_tgt.pkl
+            ├── valid_cold_tgt.pkl (empty in warm-start and not used for evaluation)
+            ├── test_cold_tgt.pkl (empty in warm-start and not used for evaluation)
             ├── all_users.json
             ├── id_mapping.json
             └── modality_emb/
 ```
-Here, {w_v}, {w_t}, {c_v}, and {c_t} are determined by the YAML parameters
-warm_valid_ratio, warm_test_ratio, t_cold_valid, and t_cold_test,
-respectively.
-The `{shuffle|noshuffle}` part is controlled by the `shuffle_user_sequence` parameter:
-- `_shuffle` indicates that user sequences are shuffled before splitting into source and target domains.
-- `_noshuffle` indicates that user sequences are preserved in temporal order, where the source domain contains past interactions and the target domain contains future interactions.
 
-The `{kcores}` suffix is determined by the combination of the `only_overlap_users` and `k_cores` parameters:
-- If `only_overlap_users=true`, the directory name will include the number of cores used for parallel processing (e.g., `_3cores`).
-- If `only_overlap_users=false`, the directory will not include the `kcores` suffix.
-
-**Typical cold-start experiments use all_users/, while typical warm-start experiments use only_overlap_users/.**
+The dataset directory structure is determined by the dataset configuration parameters.
+Here, `{w_v}`, `{w_t}`, `{c_v}`, and `{c_t}` correspond to the YAML parameters
+`warm_valid_ratio`, `warm_test_ratio`, `t_cold_valid`, and `t_cold_test`, respectively.
+The `{shuffle|noshuffle}` suffix is controlled by `shuffle_user_sequence`,
+and `{kcores}` corresponds to the value of `k_cores`.
 
 Although CDRec always generates six split files
-(`train_src.pkl`, `train_tgt.pkl`, `valid_warm_tgt.pkl`, `test_warm_tgt.pkl`, `valid_cold_tgt.pkl`, `test_cold_tgt.pkl`),
-which files are actually used depends on the evaluation scenario.
+(`train_src.pkl`, `train_tgt.pkl`, `valid_warm_tgt.pkl`, `test_warm_tgt.pkl`,
+`valid_cold_tgt.pkl`, and `test_cold_tgt.pkl`), two of them 
+(`valid_cold_tgt.pkl` and `test_cold_tgt.pkl`) are empty and are not used for evaluation.
+They are still created to keep a **unified file format** across warm-start
+and cold-start dataset constructions.
 
-**Cold-start setting.**
-CDRec first identifies all overlapped users and then selects a subset of them as cold users.
-Their target-domain interactions are removed from training and split into validation and test sets.
-The model is evaluated on its ability to predict target-domain interactions for these cold users.
-Therefore, only the following files are non-empty and used:
-- `train_src.pkl` (source-domain training data)
-- `train_tgt.pkl` (target-domain training data)
-- `valid_cold_tgt.pkl` (target interactions of validation cold users)
-- `test_cold_tgt.pkl` (target interactions of test cold users)
-
-while `valid_warm_tgt.pkl` and `test_warm_tgt.pkl` are empty.
-
-**Warm-start setting.**
-All non-overlapped users are removed, so all remaining users are warm users with interactions in both domains.
-Their target-domain interactions are split into training, validation, and test sets (typically 8:1:1).
-Therefore, only the following files are non-empty and used:
-- `train_src.pkl` (source-domain training data)
-- `train_tgt.pkl` (target-domain training data)
-- `valid_warm_tgt.pkl` (target interactions for validation)
-- `test_warm_tgt.pkl` (target interactions for testing)
-
-while `valid_cold_tgt.pkl` and `test_cold_tgt.pkl` are empty.
-
-
----
+In the warm-start setting, joint-domain preprocessing keeps only overlapped users
+and constructs a fully shared user set across domains.
+After dual-domain *k*-core filtering, all remaining users have interactions in both domains,
+and their target-domain interactions are split into training, validation,
+and test sets (typically 8:1:1).
 
 Joint dataset construction proceeds through four sequential steps:
+
 1. Load and filter users and items
 2. Split users and reindex user/item IDs
 3. Split interactions into train/validation/test sets
 4. Prepare modality embeddings
 
-####  Step 1: Load Interaction Sequences and Apply Overlap Filtering 
-After loading `all_item_seqs_{shuffle|noshuffle}.json` from both the source and target domains,
-CDRec determines whether user–item filtering is required according to the YAML
-configuration. When `only_overlap_users: True` is specified, CDRec applies
-dual-domain *k*-core filtering controlled by `k_cores`: each user must have at
-least `k_cores` interacted items in **both** domains, and each item must be
-interacted with by at least `k_cores` users within its domain. This guarantees
-that the remaining users are fully overlapped across domains and that all
-interactions satisfy a minimum frequency constraint. By default, `k_cores = 3`,
-which allows each user sequence to be effectively split into
-train/validation/test sets while preserving as many users and items as possible.
-According to the value of `only_overlap_users`, the resulting files are stored
-under `all_users/` or `only_overlap_users/`.
+#### Step 1: Load Interaction Sequences and Apply Overlap Filtering (Warm-Start Scenarios)
 
-**`all_users/` is used for cold-start evaluation, while `only_overlap_users/` is used for warm-start evaluation.**
+The dataset configuration parameters relevant to this step include
+`only_overlap_users`(whether to apply overlap filtering, and must be set to `True`
+in the warm-start setting) and `k_cores`(the minimum number of interactions required per user and item
+during overlap filtering).
 
-#### Step 2: Split Users and Reindex IDs
-In Step 2, CDRec **splits users** into disjoint categories **using raw user IDs**
-according to the YAML parameters `t_cold_valid` and `t_cold_test`, and then
-**reindexes** users and items to generate integer ID mappings for model training.
+In this step, after loading `all_item_seqs_{shuffle|noshuffle}.json` from both
+the source and target domains, CDRec decides whether to apply additional
+user–item filtering based on the YAML configuration.
 
-Based on the original user distribution, all users can be categorized into three
-types according to their domain presence: source-only users, target-only users,
-and overlapped users. **Under the cold-start evaluation scenario**, CDRec then**further 
-splits the original overlapped users** into multiple subsets according to 
-the YAML parameters `t_cold_valid` and `t_cold_test`.
+Overlap filtering is applied only when `only_overlap_users = True`;
+since warm-start datasets are constructed with `only_overlap_users` enabled,
+this filtering is always performed in the warm-start setting.
 
-Specifically, a proportion of overlapped users is sampled and reassigned as
-`valid_cold_users` and `test_cold_users`, while the remaining overlapped users
-are kept as `overlap_users`. The target-domain interactions of `valid_cold_users` 
-and `test_cold_users` are reserved exclusively for evaluation and are never used 
-during training.
-Together with the original source-only and target-only users, this process
-produces five **mutually exclusive** user groups:
+Under overlap filtering, CDRec performs **dual-domain *k*-core filtering**
+controlled by `k_cores`. Specifically, each user must have interacted
+with at least `k_cores` items in **both** domains, and each item must
+be interacted with by at least `k_cores` users within its own domain.
+This filtering step ensures that the remaining users are **fully
+overlapped across domains** and that all interactions satisfy a minimum
+frequency constraint. By default, `k_cores = 3`, which enables each user
+sequence to be effectively split into train/validation/test sets while
+preserving as many users and items as possible.
 
+#### Step 2: Split Users and Reindex IDs (Warm-Start Scenarios)
+
+The dataset configuration parameters relevant to this step include
+`t_cold_valid` and `t_cold_test` (both are set to 0 in the warm-start setting),
+so this step has no tunable parameters under warm-start scenarios.
+
+In Step 2, CDRec **splits users** into disjoint categories **using raw user IDs**,
+and then **reindexes** users and items to generate integer ID mappings for model training.
+
+Under the unified warm–cold preprocessing framework, **user splitting**
+divides users into five conceptual categories: `overlap_users`,
+`valid_cold_users`, `test_cold_users`, `src_only_users`, and `tgt_only_users`.
+However, in the warm-start setting, **all users belong to `overlap_users`**,
+and the other four groups are empty.
+These four groups are still retained to maintain a **unified user-splitting
+and file format** across warm-start and cold-start dataset construction.
 
 **An example of User Splitting in the Warm-Start Scenario:**
 ```json
@@ -321,7 +432,260 @@ produces five **mutually exclusive** user groups:
   "tgt_only_users": []
 }
 ```
-**An example of User Splitting in the Cold-Start Scenario:**
+
+This dictionary is then reindexed and stored as `all_users.json`,
+with raw user IDs replaced by internal integer IDs.
+
+After user splitting, CDRec **reindexes** both users and items for model training.
+User and item IDs are indexed **separately for each domain**, starting from 1.
+In the warm-start setting, all users are overlapped users and therefore occupy
+the same ID range (`1 ... num_users`) in both domains, so the same user has
+identical IDs in the source and target domains.
+Items are indexed independently in the two domains, each starting from 1.
+
+**An Example of ID Reindexing under Warm-Start Scenarios:**
+
+```json
+{
+  "src": {
+    "user2id": { "A036147939NFPC389VLK": 1, "A100L918633LUO": 2, "...": "..." },
+    "id2user": ["[PAD]", "A036147939NFPC389VLK", "A100L918633LUO", "..."],
+    "item2id": {"1608299953": 1, "1617160377": 2, "...": "..." },
+    "id2item": ["[PAD]", "1608299953", "1617160377", "..."]
+  },
+  "tgt": {
+    "user2id": { "A036147939NFPC389VLK": 1, "A100L918633LUO": 2, "...": "..." },
+    "id2user": ["[PAD]", "A036147939NFPC389VLK", "A100L918633LUO", "..."],
+    "item2id": { "7245456313": 1, "B00000IURU": 2, "...": "..." },
+    "id2item": ["[PAD]", "7245456313", "B00000IURU", "..."]
+  }
+}
+```
+
+In this example, `id2user` is implemented as a list rather than a dictionary 
+so that direct indexing can be used: id2user[1] = "A100L918633LUO" means that the raw user ID "A100L918633LUO" is mapped to internal ID 1.
+By convention, id2user[0] = "PAD", so that all valid user IDs start from 1 and index 0 is reserved for padding.
+
+In the warm-start setting, `user2id` and `id2user` are identical in the source
+and target domains because all users are fully overlapped,
+while `item2id` and `id2item` are different since items are domain-specific.
+
+The dictionary above is then stored as `id_mapping.json`.
+
+#### Step 3: Split Interactions into Train / Validation / Test Sets (Warm-Start Scenarios)
+
+The dataset configuration parameters relevant to this step include
+`warm_valid_ratio` and `warm_test_ratio`, which control how target-domain
+interactions of users are split into training, validation, and test sets.
+
+In Step 3 , all source-domain interactions of users are assigned
+to the training set (`train_src.pkl`).
+All target-domain interactions of users are split into
+training/validation/test according to `warm_valid_ratio` and `warm_test_ratio`,
+producing `train_tgt.pkl`, `valid_warm_tgt.pkl`, and `test_warm_tgt.pkl`.
+
+For format consistency, CDRec still outputs `valid_cold_tgt.pkl` (empty in warm-start)
+and `test_cold_tgt.pkl` (empty in warm-start).
+
+All interaction files generated in this step are stored in Pickle (.pkl)
+format. Each file contains a pandas DataFrame with the following columns:
+
+
+```text
+['user', 'item']
+```
+
+where user and item are reindexed integer IDs defined in `id_mapping.json`.
+
+It is important to note that all validation and test sets are constructed exclusively for the target domain.
+
+
+#### Step 4: Prepare Modality Embeddings (Warm-Start Scenarios)
+
+In Step 4, CDRec prepares modality embeddings according to the
+`modalities` configuration in the YAML file.
+
+Each modality entry must contain the following fields: `name`, `emb_model`, `emb_dim`, `emb_pca` , `enabled`,
+Only modalities with enabled: true are processed. For each enabled modality,
+CDRec generates three files per domain, stored under `modality_emb/`:
+
+
+```text
+modality_emb/
+├──<name>_metadata.json
+├── <name>_<emb_model>_<emb_dim>.npy
+└── <name>_final_emb_<emb_pca>.npy
+```
+
+These files store the corresponding metadata, the raw modality embeddings and the post-processed (e.g., PCA)
+embeddings, respectively. Modalities with `enabled: false` are skipped and no files are generated.
+
+For each `enabled` modality, CDRec processes the modality data
+through three sequential functions, each responsible for generating one of
+the modality-related files:
+
+
+```text
+_create_modality_data  →  _create_embs  →  _create_final_embs
+```
+
+Specifically:
+- `_create_modality_data(modality)`
+  This function looks for a method named
+  `extract_<name>_modality_data` in the corresponding model file, where <name>
+  is the modality name.
+  The method extracts modality-specific raw data and returns a JSON object,
+  which is saved as: `<name>_metadata.json`
+- `_create_embs(modality, modality_data)`
+  This function looks for a method named `generate_<name>_embs`.
+  The method generates raw modality embeddings as a NumPy array and saves
+  them as: `<name>_<emb_model>_<emb_dim>.npy`
+- _create_final_embs(modality, embs)
+  This function looks for a method named `generate_<name>_final_embs`.
+  The method performs post-processing (e.g., dimensionality reduction) on the
+  raw embeddings and saves the resulting NumPy array as: `<name>_final_emb_<emb_pca>.npy`
+
+The concrete logic of these three functions is model-dependent and is
+implemented in the corresponding `<model>.py` file.
+Users can refer to the `sentence` modality as an example, which defines the
+following methods in `amazon_modality_processor.py`:
+
+- `extract_sentence_modality_data`
+- `generate_sentence_embs`
+- `generate_sentence_final_embs`
+
+This design enables new modalities to be added by implementing the corresponding
+`extract_*`, `generate_*`, and `generate_*_final_embs` methods in `<model>.py`,
+without modifying the core preprocessing pipeline.
+
+---
+
+
+### Cold-Start Dataset Construction
+
+A typical cold-start evaluation scenario selects a subset of overlapped users
+as validation and test cold users.
+Their source-domain interactions are used for training,
+while **all** of their target-domain interactions are reserved exclusively
+for validation or test.
+
+A typical cold-start dataset configuration is:
+```yaml
+only_overlap_users: False # For cold-start scenarios, this must be False.
+k_cores: 3 # Not work at cold-start scenarios, cause it only works when only_overlap_users=True.
+shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
+warm_valid_ratio: 0 # For cold-start scenarios, this must be 0.
+warm_test_ratio: 0 # For cold-start scenarios, this must be 0.
+t_cold_valid: 0 # cold user in the target domain valid set
+t_cold_test: 0 # cold user in the target domain test set
+
+warm_eval: False  # For cold-start scenarios, this must be False.
+cold_start_eval: true # For cold-start scenarios, this must be true.
+```
+
+For cold-start experiments, `warm_eval` is set to `False` and
+`cold_start_eval` is set to `True`, meaning that only cold-user evaluation
+is performed.
+
+
+Overall, dataset preprocessing under the cold-start setting follows
+the same two-stage pipeline as the warm-start setting:
+
+1. Single-domain preprocessing, where each domain is processed independently.
+2. Joint-domain preprocessing, where cross-domain user alignment and data splitting
+   are performed according to the warm evaluation setting.
+
+
+### 1. Single-Domain Preprocessing for Cold-Start Scenarios
+
+The single-domain preprocessing pipeline for cold-start scenarios is
+identical to that for warm-start scenarios.
+
+
+### 2. Joint-Domain Preprocessing for Warm-Start Scenarios
+
+The joint-domain preprocessing pipeline for cold-start scenarios
+follows the same overall structure as the warm-start pipeline,
+but differs in user splitting, interaction partitioning,
+and the resulting dataset files.
+Using Amazon2014 with Clothing_Shoes_and_Jewelry (source) and
+Sports_and_Outdoors (target) as an example, the resulting **warm-start**
+dataset directory structure is:
+
+```text
+Amazon2014/
+└── Clothing_Shoes_and_Jewelry+Sports_and_Outdoors/
+    └── all_users/
+        └── WarmValid{w_v}_WarmTest{w_t}_ColdValid{c_v}_ColdTest{c_t}_{shuffle|noshuffle}/
+            ├── train_src.pkl
+            ├── train_tgt.pkl
+            ├── valid_warm_tgt.pkl (empty in cold-start and not used for evaluation)
+            ├── test_warm_tgt.pkl (empty in cold-start and not used for evaluation)
+            ├── valid_cold_tgt.pkl
+            ├── test_cold_tgt.pkl
+            ├── all_users.json
+            ├── id_mapping.json
+            └── modality_emb/
+```
+
+The dataset directory structure is determined by the dataset configuration parameters.
+Here, `{w_v}`, `{w_t}`, `{c_v}`, and `{c_t}` correspond to the YAML parameters
+`warm_valid_ratio`, `warm_test_ratio`, `t_cold_valid`, and `t_cold_test`, respectively.
+The `{shuffle|noshuffle}` suffix is controlled by `shuffle_user_sequence`.
+
+Although CDRec always generates six split files
+(`train_src.pkl`, `train_tgt.pkl`, `valid_warm_tgt.pkl`, `test_warm_tgt.pkl`,
+`valid_cold_tgt.pkl`, and `test_cold_tgt.pkl`), two of them 
+(`valid_warm_tgt.pkl` and `test_warm_tgt.pkl`) are empty and are not used for evaluation.
+They are still created to keep a **unified file format** across warm-start
+and cold-start dataset constructions.
+
+In the cold-start setting, joint-domain preprocessing keeps both overlapped
+and non-overlapped users, and selects a subset of overlapped users as
+validation and test cold users.
+Their source-domain interactions are used for training,
+while all of their target-domain interactions are reserved exclusively
+for validation or test.
+
+Joint dataset construction proceeds through four sequential steps:
+
+1. Load and filter users and items
+2. Split users and reindex user/item IDs
+3. Split interactions into train/validation/test sets
+4. Prepare modality embeddings
+
+
+
+#### Step 1: Load Interaction Sequences and Apply Overlap Filtering (Cold-Start Scenarios)
+
+For cold-start scenarios, `only_overlap_users` is set to `False`,
+so no overlap filtering is applied.
+In this step, CDRec simply loads
+`all_item_seqs_{shuffle|noshuffle}.json` from the source and target domains.
+
+#### Step 2: Split Users and Reindex IDs (Carm-Start Scenarios)
+
+The dataset configuration parameters relevant to this step include
+`t_cold_valid` and `t_cold_test`, which specify the proportions of overlapped
+users to be selected as validation and test cold users, respectively.
+
+In Step 2, CDRec **splits users** into disjoint categories **using raw user IDs**,
+and then **reindexes** users and items to generate integer ID mappings for model training.
+
+Users are first categorized into three groups based on their domain presence:
+`src_only_users`, `tgt_only_users`, and `overlapped_users`.
+From the original `overlapped_users`, a subset is then sampled according to
+`t_cold_valid` and `t_cold_test` and reassigned as `valid_cold_users`
+and `test_cold_users`, while the remaining users stay in `overlap_users`.
+As a result, CDRec produces five disjoint user groups:
+`overlap_users`, `valid_cold_users`, `test_cold_users`,
+`src_only_users`, and `tgt_only_users`.
+
+The target-domain interactions of `valid_cold_users` and `test_cold_users`
+are reserved exclusively for evaluation and are never used during training.
+
+**An example of User Splitting in the Cold-Start Scenario
+(The length of `overlap_users` is 3128.):**
 ```json
 {
   "overlap_users": ["A021943320Y3C5B58IY79", "A036147939NFPC389VLK", "..."],
@@ -331,11 +695,12 @@ produces five **mutually exclusive** user groups:
   "tgt_only_users": ["A2PAFNZ5D4J4WN", "A2S26YGSVXBCFL", "..."]
 }
 ```
+
 These five user sets are disjoint, and their union forms the complete user set.
 They are saved in `all_users.json` after raw string user IDs 
 are reindexed into internal integer IDs according to `id_mapping.json`.
 
-CDRec also generates `id_mapping.json` to map raw user/item IDs to consecutive
+Then, CDRec generates `id_mapping.json` to map raw user/item IDs to consecutive
 integer IDs for model training:
 
 For user indexing, CDRec builds domain-specific user vocabularies,
@@ -348,20 +713,24 @@ with users indexed separately in the source and target domains:
 User and item IDs are indexed **separately for each domain**, starting from 1, following the ordered user groups defined above.
 In the source domain, users are indexed in the order `overlap_users → valid_cold_users → test_cold_users → src_only_users`, 
 while in the target domain they are indexed as `overlap_users → tgt_only_users`.
+
 **Overlapped users are assigned identical ID ranges in both domains (`1 ... num_overlap_users`)
 to ensure that the same user has consistent indices across domains.**
 
-**An Example of ID Reindexing under Warm- and Cold-Start Scenarios:**
+**An Example of ID Reindexing under Cold-Start Scenarios:**
+
 ```json
 {
   "src": {
-    "user2id": { "A021943320Y3C5B58IY79": 1, "A036147939NFPC389VLK": 2, "...": "..." },
+    "user2id": { "A021943320Y3C5B58IY79": 1, "A036147939NFPC389VLK": 2,
+      "...": "...", "AZY513DDDRN0Q": 3128, "A10AVFDDU87KJ4": 3129, "...": "..."},
     "id2user": ["[PAD]", "A021943320Y3C5B58IY79", "A036147939NFPC389VLK", "..."],
     "item2id": {"0000031887": 1, "0123456479": 2, "...": "..." },
     "id2item": ["[PAD]", "0000031887", "0123456479", "..."]
   },
   "tgt": {
-    "user2id": { "A021943320Y3C5B58IY79": 1, "A036147939NFPC389VLK": 2, "...": "..." },
+    "user2id": { "A021943320Y3C5B58IY79": 1, "A036147939NFPC389VLK": 2,
+      "...": "...", "AZY513DDDRN0Q": 3128, "A00046902LP5YSDV0VVNF": 3129, "...": "..."},
     "id2user": ["[PAD]", "A021943320Y3C5B58IY79", "A036147939NFPC389VLK", "..."],
     "item2id": { "1881509818": 1, "2094869245": 2, "...": "..." },
     "id2item": ["[PAD]", "1881509818", "2094869245", "..."]
@@ -369,89 +738,59 @@ to ensure that the same user has consistent indices across domains.**
 }
 ```
 
-In this example, `id2user` is implemented as a list rather than a dictionary 
-so that direct indexing can be used: id2user[1] = "A021943320Y3C5B58IY79" means that the raw user ID "A021943320Y3C5B58IY79" is mapped to internal ID 1.
-By convention, id2user[0] = "PAD", so that all valid user IDs start from 1 and index 0 is reserved for padding.
+In this example, the users in the `overlap_users` group (one of the five user categories)
+are indexed as `1 ... 3128` in **both** the source and target domains,
+so user IDs in this range have a one-to-one correspondence across domains.
+Starting from ID 3129, users belong to the other four categories
+(`valid_cold_users`, `test_cold_users`, `src_only_users`, or `tgt_only_users`)
+and are therefore domain-specific and do not correspond across domains.
+In other words, user ID 3128 refers to the **same user** in both domains,
+while user ID 3129 in the source and target domains refers to **different users**.
 
-#### Step 3: Split Interactions into Train / Validation / Test Sets
 
-In Step 3, CDRec splits cross-domain user–item interactions into training,
-validation, and test sets according to the user categories defined in Step 2.
-This step is controlled by the YAML parameters `warm_valid_ratio`,
-`warm_test_ratio`, `t_cold_valid`, and `t_cold_test`, and generates six
-interaction files: `train_src.pkl`, `train_tgt.pkl`, `valid_warm_tgt.pkl`,
-`test_warm_tgt.pkl`, `valid_cold_tgt.pkl`, and `test_cold_tgt.pkl`.
+#### Step 3: Split Interactions into Train / Validation / Test Sets (Cold-Start Scenarios)
+
+In Step 3, all source-domain interactions of all users are assigned
+to the training set (`train_src.pkl`).
+
+For users in `overlap_users`, their target-domain interactions are also used
+for training and stored in `train_tgt.pkl`.
+
+For users in `valid_cold_users` and `test_cold_users`, **all** of their
+target-domain interactions are reserved exclusively for evaluation and stored in
+`valid_cold_tgt.pkl` and `test_cold_tgt.pkl`, respectively.
+
+For users in `tgt_only_users`, their target-domain interactions are assigned
+to the training set (`train_tgt.pkl`).
+
+For format consistency, `valid_warm_tgt.pkl` and `test_warm_tgt.pkl` are still
+generated but are empty in the cold-start setting.
 
 All interaction files generated in this step are stored in Pickle (.pkl)
 format. Each file contains a pandas DataFrame with the following columns:
+
+
 ```text
 ['user', 'item']
 ```
+
 where user and item are reindexed integer IDs defined in `id_mapping.json`.
-
-Note that in the warm-start evaluation scenario, only `train_src.pkl`, `train_tgt.pkl`,
-`valid_warm_tgt.pkl`, and `test_warm_tgt.pkl` are non-empty and used,
-while `valid_cold_tgt.pkl` and `test_cold_tgt.pkl` are empty.
-
-In the cold-start evaluation scenario, only `train_src.pkl`, `train_tgt.pkl`, 
-`valid_cold_tgt.pkl`, and `test_cold_tgt.pkl` are non-empty and used,
-while `valid_warm_tgt.pkl` and `test_warm_tgt.pkl` are empty.
 
 It is important to note that all validation and test sets are constructed exclusively for the target domain.
 
-#### Step 4: Prepare Modality Embeddings
-In Step 4, CDRec prepares modality embeddings according to the
-`modalities` configuration in the YAML file.
-Each modality entry must contain the following fields: `name`, `emb_model`, `emb_dim`, `emb_pca` , `enabled`,
-Only modalities with enabled: true are processed. For each enabled modality,
-CDRec generates three files per domain, stored under `modality_emb/`:
+
+#### Step 4: Prepare Modality Embeddings (Cold-Start Scenarios)
+
+The modality embedding preparation pipeline for cold-start scenarios
+is identical to that for warm-start scenarios.
+The final generated files are:
 ```text
 modality_emb/
 ├──<name>_metadata.json
 ├── <name>_<emb_model>_<emb_dim>.npy
 └── <name>_final_emb_<emb_pca>.npy
 ```
-These files store the corresponding metadata, the raw modality embeddings and the post-processed (e.g., PCA)
-embeddings, respectively. Modalities with
-`enabled: false` are skipped and no files are generated.
 
-For each `enabled` modality, CDRec processes the modality data
-through three sequential functions, each responsible for generating one of
-the modality-related files:
-```text
-_create_modality_data  →  _create_embs  →  _create_final_embs
-```
-
-Specifically:
-
-- `_create_modality_data(modality)`
-This function looks for a method named
-`extract_<name>_modality_data` in the corresponding model file, where <name>
-is the modality name.
-The method extracts modality-specific raw data and returns a JSON object,
-which is saved as: `<name>_metadata.json`
-- `_create_embs(modality, modality_data)`
-This function looks for a method named `generate_<name>_embs`.
-The method generates raw modality embeddings as a NumPy array and saves
-them as: `<name>_<emb_model>_<emb_dim>.npy`
-- _create_final_embs(modality, embs)
-This function looks for a method named `generate_<name>_final_embs`.
-The method performs post-processing (e.g., dimensionality reduction) on the
-raw embeddings and saves the resulting NumPy array as: `<name>_final_emb_<emb_pca>.npy`
-
-The concrete logic of these three functions is model-dependent and is
-implemented in the corresponding `<model>.py` file.
-Users can refer to the `sentence` modality as an example, which defines the
-following methods in `amazon_modality_processor.py`:
-- `extract_sentence_modality_data`
-- `generate_sentence_embs`
-- `generate_sentence_final_embs`
-
-This design enables new modalities to be added by implementing the corresponding
-`extract_*`, `generate_*`, and `generate_*_final_embs` methods in `<model>.py`,
-without modifying the core preprocessing pipeline.
-
----
 
 ## Multi-stage Training Details
 

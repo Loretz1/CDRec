@@ -1,16 +1,15 @@
 # Overwrite Dataset Setting
-only_overlap_users: False
+only_overlap_users: True # Whether to construct a fully-overlapped (warm-start) or partially-overlapped (cold-start) user set
 k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
 shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
-warm_valid_ratio: 0 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
-warm_test_ratio: 0 # Ratio of interactions from warm users in the target domain to be assigned to the test set
-t_cold_valid: 0.1 # cold user in the target domain valid set
-t_cold_test: 0.1 # cold user in the target domain test set
+warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
+warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
+t_cold_valid: 0 # cold user in the target domain valid set
+t_cold_test: 0 # cold user in the target domain test set
 
 # 1. Eval Setting
-warm_eval: False  # Whether to enable warm user evaluation
-overlapped_users_for_warm_eval: True # Warm evaluation is performed only after filtering users that exist in both domains (overlapped users).
-cold_start_eval: True # Whether to enable cold start user evaluation
+warm_eval: True  # Whether to enable warm user evaluation
+cold_start_eval: False # Whether to enable cold start user evaluation
 
 # 2. Multi-stage Training Setting
 # (state, epochs, train_batch_size, learner, learning_rate, learning_rate_scheduler, weight_decay) is required for each stage
@@ -28,7 +27,7 @@ training_stages:
 # 3. Fixed Model Parameters
 embedding_size: 64
 neg_seq_len: 1
-diffuser_type: self_attention    # ['mlp1','mlp2','self_attention']
+diffuser_type: mlp1    # ['mlp1','mlp2','self_attention']
 timestep: 2000                    # 200, diffusion steps
 uncon_w: 5                    # 2, the weight of conditioned diffusion in inference phase
 uncon_p: 0.1                    # 0.1, how much prob does train phase use unconditioned diffusion
@@ -40,12 +39,13 @@ n_heads: 4
 n_layers: 1
 mean_pooling: 0                # if using mean pooling, 0: no, 1: yes
 loss_n: bpr                   # bce, bpr, mse, ccl
-log_model_suffix: simple_selfAttention
+log_model_suffix: simple_warm
 
 # 4. Model Hyperparameter Grid Search Setting
 gamma: [0.1,0.5,0.999,1]
 aggregator: ["mean", "user_attention", "self_attention", "transformer"]
 history_len: [10,20,40]
+#history_len: [100,80,60]
 
 # hyperparameter search space
 hyper_parameters:

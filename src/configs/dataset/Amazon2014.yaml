@@ -13,7 +13,7 @@ modalities:
     enabled: false
 
 
-only_overlap_users: False
+only_overlap_users: False # Whether to construct a fully-overlapped (warm-start) or partially-overlapped (cold-start) user set
 k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
 
 shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset

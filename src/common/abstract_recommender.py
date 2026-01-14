@@ -41,7 +41,25 @@ class AbstractRecommender(nn.Module):
         Given users, calculate the scores between users and all target items.
 
         Args:
-            interaction (Interaction): Interaction class of the batch.
+            interaction (Interaction):
+                A batch Interaction object whose internal structure is:
+
+                    interaction[0] : torch.LongTensor of shape [batch_size]
+
+                    which contains a batch of user ids (1-based). These user ids are
+                    interpreted differently depending on the evaluation setting:
+                    - When is_warm = True:
+                        interaction[0] contains SOURCE-domain user ids.
+                    - When is_warm = False:
+                        interaction[0] contains TARGET-domain user ids.
+
+
+            is_warm (bool):
+                Indicates whether the evaluation is in the warm-start or cold-start
+                setting.
+
+                - True  : warm-start evaluation.
+                - False : cold-start evaluation.
 
         Returns:
             torch.Tensor: Predicted scores for given users and all target items, which includes item 0 which is 'PAD'
