@@ -593,7 +593,7 @@ the same two-stage pipeline as the warm-start setting:
 
 1. Single-domain preprocessing, where each domain is processed independently.
 2. Joint-domain preprocessing, where cross-domain user alignment and data splitting
-   are performed according to the warm evaluation setting.
+   are performed according to the cold evaluation setting.
 
 
 ### 1. Single-Domain Preprocessing for Cold-Start Scenarios
