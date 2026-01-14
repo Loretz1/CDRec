@@ -602,14 +602,14 @@ The single-domain preprocessing pipeline for cold-start scenarios is
 identical to that for warm-start scenarios.
 
 
-### 2. Joint-Domain Preprocessing for Warm-Start Scenarios
+### 2. Joint-Domain Preprocessing for Cold-Start Scenarios
 
 The joint-domain preprocessing pipeline for cold-start scenarios
 follows the same overall structure as the warm-start pipeline,
 but differs in user splitting, interaction partitioning,
 and the resulting dataset files.
 Using Amazon2014 with Clothing_Shoes_and_Jewelry (source) and
-Sports_and_Outdoors (target) as an example, the resulting **warm-start**
+Sports_and_Outdoors (target) as an example, the resulting **cold-start**
 dataset directory structure is:
 
 ```text
@@ -663,7 +663,7 @@ so no overlap filtering is applied.
 In this step, CDRec simply loads
 `all_item_seqs_{shuffle|noshuffle}.json` from the source and target domains.
 
-#### Step 2: Split Users and Reindex IDs (Carm-Start Scenarios)
+#### Step 2: Split Users and Reindex IDs (Cold-Start Scenarios)
 
 The dataset configuration parameters relevant to this step include
 `t_cold_valid` and `t_cold_test`, which specify the proportions of overlapped
