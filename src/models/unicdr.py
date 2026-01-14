@@ -262,20 +262,13 @@ class UniCDR(GeneralRecommender):
             specific_user = self.agg_list[1](user_emb_tgt, context_item_emb_tgt, self.history_scores_tgt[users])
 
             # shared
-            shared_user_id = users.clone()
-            mask_tgt_only = users > self.num_users_overlap
-            shared_user_id[mask_tgt_only] = (users[mask_tgt_only] + (self.num_users_src - self.num_users_overlap))
-            global_user_emb = self.emb_user_shared(shared_user_id)
-
+            global_user_emb = self.emb_user_shared(users)
             global_item = torch.zeros((B, 2, self.max_len), dtype=torch.long, device=self.device)
             global_score = torch.full((B, 2, self.max_len), -100.0, device=self.device)
             global_item[:, 1, :] = self.history_items_tgt[users]
             global_score[:, 1, :] = self.history_scores_tgt[users]
-            overlap_mask = users <= self.num_users_overlap
-            if overlap_mask.any():
-                u_overlap = users[overlap_mask]
-                global_item[overlap_mask, 0, :] = self.history_items_src[u_overlap]
-                global_score[overlap_mask, 0, :] = self.history_scores_src[u_overlap]
+            global_item[:, 0, :] = self.history_items_src[users]
+            global_score[:, 0, :] = self.history_scores_src[users]
             global_item_emb = torch.cat([
                 self.emb_item_src(global_item[:, 0, :]),
                 self.emb_item_tgt(global_item[:, 1, :])
@@ -361,6 +354,6 @@ class BehaviorAggregator(nn.Module):
 
     def masked_softmax(self, X, mask):
         # use the following softmax to avoid nans when a sequence is entirely masked
-        X = X.masked_fill_(mask, 0)
+        X = X.masked_fill_(mask, -1e9)
         e_X = torch.exp(X)
         return e_X / (e_X.sum(dim=1, keepdim=True) + 1.e-12)
