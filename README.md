@@ -747,6 +747,14 @@ and are therefore domain-specific and do not correspond across domains.
 In other words, user ID 3128 refers to the **same user** in both domains,
 while user ID 3129 in the source and target domains refers to **different users**.
 
+This reindexing design uses **separate user index spaces for the source and target domains**,
+each starting from 1.
+The boundary between overlapped and domain-specific users is determined by
+`num_overlap_users`: user IDs `1 ... num_overlap_users` correspond to
+`overlap_users`, while larger IDs correspond to domain-specific users.
+This indexing scheme makes it easy to distinguish overlapped and non-overlapped
+users and allows models to construct domain-specific embedding layers
+in a simple and consistent way.
 
 #### Step 3: Split Interactions into Train / Validation / Test Sets (Cold-Start Scenarios)
 
