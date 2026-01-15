@@ -434,7 +434,7 @@ and file format** across warm-start and cold-start dataset construction.
 ```
 
 This dictionary is then reindexed and stored as `all_users.json`,
-with raw user IDs replaced by internal integer IDs.
+with raw user IDs replaced by integer IDs.
 
 After user splitting, CDRec **reindexes** both users and items for model training.
 User and item IDs are indexed **separately for each domain**, starting from 1.
@@ -463,7 +463,7 @@ Items are indexed independently in the two domains, each starting from 1.
 ```
 
 In this example, `id2user` is implemented as a list rather than a dictionary 
-so that direct indexing can be used: id2user[1] = "A100L918633LUO" means that the raw user ID "A100L918633LUO" is mapped to internal ID 1.
+so that direct indexing can be used: id2user[1] = "A100L918633LUO" means that the raw user ID "A100L918633LUO" is mapped to integer ID 1.
 By convention, id2user[0] = "PAD", so that all valid user IDs start from 1 and index 0 is reserved for padding.
 
 In the warm-start setting, `user2id` and `id2user` are identical in the source
@@ -698,7 +698,7 @@ are reserved exclusively for evaluation and are never used during training.
 
 These five user sets are disjoint, and their union forms the complete user set.
 They are saved in `all_users.json` after raw string user IDs 
-are reindexed into internal integer IDs according to `id_mapping.json`.
+are reindexed into integer IDs according to `id_mapping.json`.
 
 Then, CDRec generates `id_mapping.json` to map raw user/item IDs to consecutive
 integer IDs for model training:

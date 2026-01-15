@@ -375,9 +375,17 @@ class Trainer(AbstractTrainer):
                         self.logger.info(update_output_cold)
                     self.best_valid_result_cold = valid_result_cold
                     self.best_test_upon_valid_cold = test_result_cold
-                # 早停的逻辑是两个域都Over了才结束。
-                # 如果一个域不设置eval，比如Yaml里面warm_eval=false或者cold_start_eval=false，
-                # 那就只看一个域的，因为不评价的域flag=true
+                # 早停的逻辑是Cold和Warm都满足了早停条件，才早停。
+                # 分三种情况
+                # 1. Yaml中warm_eval=true，cold_eval=false，
+                # 即评估热启动效果，那么这里的返回的stop_flag_cold恒为True，
+                # 只根据stop_flag_warm判断是否早停，stop_flag_warm=True的条件就是热评估连续stopping_step个epoch在valid上无提升
+                # 2. Yaml中warm_eval=false，cold_eval=true，
+                # 即评估冷启动效果，和上面的热启动逻辑差不多，就是stop_flag_warm和stop_flag_cold反过来，
+                # stop_flag_warm恒为True，只看stop_flag_cold
+                # 3. Yaml中warm_eval=true，cold_eval=true，
+                # 保留了同时评估冷/热的能力，stop_flag_warm和stop_flag_cold同时为True，
+                # 即冷和热评估都连续stopping_step个epoch在valid上无提升时，才早停。这个场景在目前的冷热分离评估场景下是用不到的。
                 if stop_flag_warm and stop_flag_cold:
                     stop_msg = f"+++++ Finished training at epoch {epoch_idx}, best eval results:"
                     if verbose:
