@@ -89,9 +89,9 @@ class SinusoidalPositionEmbeddings(nn.Module):
         return embeddings
 
 
-class CD_CDR(GeneralRecommender):
+class CD_CDR_simple_without_diffusion(GeneralRecommender):
     def __init__(self, config, dataloader):
-        super(CD_CDR, self).__init__(config, dataloader)
+        super(CD_CDR_simple_without_diffusion, self).__init__(config, dataloader)
 
         # load parameters info
         self.embedding_size = config["embedding_size"]
@@ -198,10 +198,10 @@ class CD_CDR(GeneralRecommender):
             self.w_k = nn.Linear(self.embedding_size, self.embedding_size)
             self.w_v = nn.Linear(self.embedding_size, self.embedding_size)
         # without_diffusion & diff2mlp
-        # for p in self.diffu_mlp.parameters():
-        #     p.requires_grad = False
-        # for p in self.step_mlp.parameters():
-        #     p.requires_grad = False
+        for p in self.diffu_mlp.parameters():
+            p.requires_grad = False
+        for p in self.step_mlp.parameters():
+            p.requires_grad = False
         # without_diffusion & diff2mlp
         # diff2mlp
         # self.mlp_generator = nn.Sequential(
@@ -221,7 +221,7 @@ class CD_CDR(GeneralRecommender):
             self.betas = cosine_beta_schedule(timesteps=self.timesteps)
         elif self.beta_sche == 'sqrt':
             self.betas = torch.tensor(betas_for_alpha_bar(self.timesteps, lambda t: 1 - np.sqrt(t + 0.0001), )).float()
-        # define alphas 
+        # define alphas
         self.alphas = 1. - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, axis=0)
         self.alphas_cumprod_prev = F.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
@@ -613,8 +613,8 @@ class CD_CDR(GeneralRecommender):
             elif self.loss_n == 'mse':
                 loss = self.mseloss(UI_aggregation_e, pos_item_e)
             # without_diffusion & diff2mlp
-            x_start, predicted_x = self.run_diffusion_process(pos_item_e, UI_aggregation_e)
-            loss += F.mse_loss(x_start, predicted_x)
+            # x_start, predicted_x = self.run_diffusion_process(pos_item_e, UI_aggregation_e)
+            # loss += F.mse_loss(x_start, predicted_x)
             # without_diffusion & diff2mlp
             # diff2mlp
             # pred_item_e = self.mlp_generator(UI_aggregation_e)
@@ -652,8 +652,8 @@ class CD_CDR(GeneralRecommender):
         UI_aggregation_e = self.domain_condition_generator(s_UI_aggregation_e, t_UI_aggregation_e, 1)  # [B, D]
 
         # without_diffusion & diff2mlp
-        x = self.sample_from_noise(self.denoise_step, self.denoise_uncon, UI_aggregation_e)
-        # x = UI_aggregation_e
+        # x = self.sample_from_noise(self.denoise_step, self.denoise_uncon, UI_aggregation_e)
+        x = UI_aggregation_e
         # x = self.mlp_generator(UI_aggregation_e)
         # without_diffusion & diff2mlp
         all_item_emb = self.item_emb_tgt.weight

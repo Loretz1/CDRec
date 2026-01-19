@@ -34,6 +34,7 @@ mlp_layers: 0
 log_model_suffix: BPRMF
 
 # 4. Model Hyperparameter Grid Search Setting
+#mlp_layers: [1, 2, 3]
 
 # hyperparameter search space
 hyper_parameters: ["training_stages.0.learning_rate"]

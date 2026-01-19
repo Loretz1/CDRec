@@ -15,41 +15,33 @@ cold_start_eval: False # Whether to enable cold start user evaluation
 # (state, epochs, train_batch_size, learner, learning_rate, learning_rate_scheduler, weight_decay) is required for each stage
 # clip_grad_norm is optional
 training_stages:
-  - name: both_training
+  - name: target_both
     state: BOTH
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.0001]
+    learning_rate: [0.001, 0.01]
     learning_rate_scheduler: [1.0, 50]
-    weight_decay: 1e-7
+    weight_decay: 0.000001
 
-# 3. Fixed Model Parameters
-embedding_size: 64
-neg_seq_len: 1
-diffuser_type: mlp1    # ['mlp1','mlp2','self_attention']
-timestep: 2000                    # 200, diffusion steps
-uncon_w: 5                    # 2, the weight of conditioned diffusion in inference phase
-uncon_p: 0.1                    # 0.1, how much prob does train phase use unconditioned diffusion
-beta_sche: linear                  # exp, the schedule of beta sequence
-dropout: 0.1
-layer_norm: 1                   # if using layer norm
-#transformer
-n_heads: 4
-n_layers: 1
-mean_pooling: 0                # if using mean pooling, 0: no, 1: yes
-loss_n: bpr                   # bce, bpr, mse, ccl
-log_model_suffix: simple_warm
+# 3. Fixed Model Parameters Setting
+feature_dim: 64
+dropout: 0.3
+lambda_a: 0.5
 
 # 4. Model Hyperparameter Grid Search Setting
-gamma: [0.1,0.5,0.999,1]
-aggregator: ["mean", "user_attention", "self_attention", "transformer"]
-history_len: [10,20,40]
-#history_len: [100,80,60]
+history_len: [ 10, 20 ,40 ]
+#history_len: [ 100, 80 ,60 ]
+aggregator: [ 'mean' , 'user_attention']
+mask_rate: [ 0.2, 0.4 ]
+lambda_loss: [ 0.2, 0.5, 0.8 ]
+#lambda_loss: [ 1 ]
+log_model_suffix: warm
 
 # hyperparameter search space
 hyper_parameters:
-  - training_stages.0.learning_rate
-  - gamma
-  - history_len
-  - aggregator
+  - "training_stages.0.learning_rate"
+  - 'history_len'
+  - 'aggregator'
+  - 'mask_rate'
+  - 'lambda_loss'

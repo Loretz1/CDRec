@@ -34,8 +34,8 @@ history_len: [ 10, 20 ,40 ]
 #history_len: [ 100, 80 ,60 ]
 aggregator: [ 'mean' , 'user_attention']
 mask_rate: [ 0.2, 0.4 ]
-lambda_loss: [ 0.2, 0.5, 0.8 ]
-#lambda_loss: [ 1 ]
+#lambda_loss: [ 0.2, 0.5, 0.8 ]
+lambda_loss: [ 1 ]
 log_model_suffix: warm
 
 # hyperparameter search space
