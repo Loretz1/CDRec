@@ -26,19 +26,11 @@ training_stages:
 
 # 3. Fixed Model Parameters Setting
 embedding_dim: 64
-timesteps: 20
-beta_start: 0.0001
-beta_end: 0.02
-log_model_suffix: warm
+
+#log_model_suffix:
 
 # 4. Model Hyperparameter Grid Search Setting
-diff_weight: [0.001, 0.1, 0.5, 1, 2, 4]
-#diff_weight: [ 6,8,10,15 ]
-#beta_sche: ["linear"]
-beta_sche: ["linear", "exp", "cosine", "sqrt"]
 
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.0.learning_rate"
-  - "diff_weight"
-  - "beta_sche"

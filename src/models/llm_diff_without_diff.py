@@ -7,9 +7,9 @@ from common.loss import BPRLoss
 import math
 import numpy as np
 
-class LLM_Diff(GeneralRecommender):
+class LLM_Diff_without_diff(GeneralRecommender):
     def __init__(self, config, dataloader):
-        super(LLM_Diff, self).__init__(config, dataloader)
+        super(LLM_Diff_without_diff, self).__init__(config, dataloader)
 
         self.config = config
         self.embedding_dim = config['embedding_dim']
@@ -23,8 +23,8 @@ class LLM_Diff(GeneralRecommender):
         self.emb_item_src = nn.Embedding(self.num_items_src + 1, self.embedding_dim, padding_idx=0)
         self.emb_item_tgt = nn.Embedding(self.num_items_tgt + 1, self.embedding_dim, padding_idx=0)
 
-        self.diff_src = Diffusion(config)
-        self.diff_tgt = Diffusion(config)
+        # self.diff_src = Diffusion(config)
+        # self.diff_tgt = Diffusion(config)
 
         self.bpr_loss = BPRLoss()
 
@@ -48,9 +48,10 @@ class LLM_Diff(GeneralRecommender):
 
         # 这里t是随机采的，不是对称采样
         B = u_src.size(0)
-        t_src = torch.randint(low=0, high=self.diff_src.timesteps, size=(B,), device=u_src.device)
-        diff_loss_src, u_src_denoised = self.diff_src.p_losses(x_start=u_src, t=t_src, loss_type="l2")
-        u_src_final = u_src + u_src_denoised # 残差连接
+        # t_src = torch.randint(low=0, high=self.diff_src.timesteps, size=(B,), device=u_src.device)
+        # diff_loss_src, u_src_denoised = self.diff_src.p_losses(x_start=u_src, t=t_src, loss_type="l2")
+        # u_src_final = u_src + u_src_denoised # 残差连接
+        u_src_final = u_src
 
         pos_score_src = (u_src_final * i_pos_src).sum(dim=-1)
         neg_score_src = (u_src_final * i_neg_src).sum(dim=-1)
@@ -65,16 +66,18 @@ class LLM_Diff(GeneralRecommender):
         i_neg_tgt = self.emb_item_tgt(neg_items_tgt)  # [B, D]
 
         B = u_tgt.size(0)
-        t_tgt = torch.randint(low=0, high=self.diff_tgt.timesteps, size=(B,), device=u_tgt.device)
-        diff_loss_tgt, u_tgt_denoised = self.diff_tgt.p_losses(x_start=u_tgt, t=t_tgt, loss_type="l2")
-        u_tgt_final = u_tgt + u_tgt_denoised # 残差连接
+        # t_tgt = torch.randint(low=0, high=self.diff_tgt.timesteps, size=(B,), device=u_tgt.device)
+        # diff_loss_tgt, u_tgt_denoised = self.diff_tgt.p_losses(x_start=u_tgt, t=t_tgt, loss_type="l2")
+        # u_tgt_final = u_tgt + u_tgt_denoised # 残差连接
+        u_tgt_final = u_tgt
 
         pos_score_tgt = (u_tgt_final * i_pos_tgt).sum(dim=-1)
         neg_score_tgt = (u_tgt_final * i_neg_tgt).sum(dim=-1)
         bpr_loss_tgt = self.bpr_loss(pos_score_tgt, neg_score_tgt)
 
         # loss = loss_rec + loss_dif
-        loss = bpr_loss_src+ bpr_loss_tgt+ self.diff_weight * (diff_loss_src + diff_loss_tgt)
+        # loss = bpr_loss_src+ bpr_loss_tgt+ self.diff_weight * (diff_loss_src + diff_loss_tgt)
+        loss = bpr_loss_src + bpr_loss_tgt
         return loss
 
     def full_sort_predict(self, interaction, is_warm):
@@ -86,15 +89,13 @@ class LLM_Diff(GeneralRecommender):
             offset = self.num_users_src - self.num_users_overlap
             users_global = users + (users > self.num_users_overlap).long() * offset
             u = self.emb_user(users_global)
-            _, u_denoised, _, _, _ = self.diff_tgt.sample(u)
+            # _, u_denoised, _, _, _ = self.diff_tgt.sample(u)
         else:
             u = self.emb_user(users)
-            # src_diff_infer
-            _, u_denoised, _, _, _ = self.diff_tgt.sample(u)
-            # _, u_denoised, _, _, _ = self.diff_src.sample(u)
-            # src_diff_infer
+            # _, u_denoised, _, _, _ = self.diff_tgt.sample(u)
 
-        u_final = u + u_denoised
+        # u_final = u + u_denoised
+        u_final = u
 
         item_emb = self.emb_item_tgt.weight
         scores = torch.matmul(u_final, item_emb.t())
