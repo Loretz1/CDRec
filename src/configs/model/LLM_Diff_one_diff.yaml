@@ -1,0 +1,42 @@
+# Overwrite Dataset Setting
+only_overlap_users: True # Whether to construct a fully-overlapped (warm-start) or partially-overlapped (cold-start) user set
+k_cores: 3 # only work with only_overlap_users, for dual domain k-cores, at least 3 otherwise can not split train/valid/test
+shuffle_user_sequence: True  # weather shuffle users' item sequence before split train/valid/test dataset
+warm_valid_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the validation set
+warm_test_ratio: 0.1 # Ratio of interactions from warm users in the target domain to be assigned to the test set
+t_cold_valid: 0 # cold user in the target domain valid set
+t_cold_test: 0 # cold user in the target domain test set
+
+# 1. Eval Setting
+warm_eval: True  # Whether to enable warm user evaluation
+cold_start_eval: False # Whether to enable cold start user evaluation
+
+# 2. Multi-stage Training Setting
+# (state, epochs, train_batch_size, learner, learning_rate, learning_rate_scheduler, weight_decay) is required for each stage
+# clip_grad_norm is optional
+training_stages:
+  - name: target_both
+    state: BOTH
+    epochs: 1000
+    train_batch_size: 2048
+    learner: adam
+    learning_rate: [0.001, 0.01]
+    learning_rate_scheduler: [1.0, 50]
+    weight_decay: 0
+
+# 3. Fixed Model Parameters Setting
+embedding_dim: 64
+timesteps: 20
+beta_start: 0.0001
+beta_end: 0.02
+log_model_suffix: warm
+
+# 4. Model Hyperparameter Grid Search Setting
+diff_weight: [ 0.5, 1, 2, 4, 6,8,10]
+beta_sche: ["linear", "exp", "cosine", "sqrt"]
+
+# hyperparameter search space
+hyper_parameters:
+  - "training_stages.0.learning_rate"
+  - "diff_weight"
+  - "beta_sche"
