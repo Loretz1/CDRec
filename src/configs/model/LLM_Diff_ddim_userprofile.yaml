@@ -25,26 +25,31 @@ training_stages:
     weight_decay: 0
 
 modalities:
-  - name: "LLM_Diff_one_diff_multimodal_semantics"
+  - name: "CrossDomain_semantics"
     emb_model: "text-embedding-3-large"
     emb_batch_size: 1024
     emb_dim: 3072
     emb_pca: 3072
+    normalize_semantic_emb: False
     enabled: true
 
 # 3. Fixed Model Parameters Setting
 embedding_dim: 64
 timesteps: 20
+linespace: 2
 beta_start: 0.0001
 beta_end: 0.02
 log_model_suffix: warm
 
 # 4. Model Hyperparameter Grid Search Setting
 diff_weight: [ 0.5, 1, 2, 4, 6,8,10]
-beta_sche: ["linear", "exp", "cosine", "sqrt"]
+lambda_user_emb: [0, 0.1, 0.5, 1, 1.5]
+#beta_sche: ["linear", "exp", "cosine", "sqrt"]
+beta_sche: ["sqrt"]
 
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.0.learning_rate"
   - "diff_weight"
+  - "lambda_user_emb"
   - "beta_sche"
