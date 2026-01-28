@@ -571,6 +571,11 @@ def _process_single_user(args):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
+                # temperature=0.2,
+                # max_tokens=512,
+                # extra_body={
+                #     "chat_template_kwargs": {"enable_thinking": False},
+                # },
             )
 
             text = response.choices[0].message.content.strip()
@@ -721,6 +726,8 @@ def generate_CrossDomain_semantics_embs(
         num_overlap_user+1 ~ num_src_user    : src-only users
         num_overlap_user+1 ~ num_tgt_user    : tgt-only users
     """
+    if len(modality_data["error_users"]):
+        raise ValueError(f"There are error users in modality data json file.")
 
     # =========================================================
     # Step 0: infer number of overlap users (prefix-based)
@@ -779,32 +786,61 @@ def generate_CrossDomain_semantics_embs(
         ordered_texts.append(user_summaries[raw_user])
 
     # =========================================================
-    # Step 3: batch encode summaries (PicCDR style)
+    # Step 3: batch encode summaries
     # =========================================================
-    from openai import OpenAI
-    client = OpenAI(
-        api_key=config["openai_api_key"],
-        base_url=config.get("openai_base_url", None),
-    )
-
     raw_user_to_emb = {}
 
     num_users = len(ordered_texts)
-    for start in range(0, num_users, batch_size):
-        end = min(start + batch_size, num_users)
+    embedding_model = modality["emb_model"]
+    batch_size = modality["emb_batch_size"]
+    normalize = modality.get("normalize_semantic_emb", False)
 
-        batch_texts = ordered_texts[start:end]
-        batch_users = ordered_raw_users[start:end]
+    if 'all-mpnet-base-v2' in modality['emb_model']:
+        from sentence_transformers import SentenceTransformer
 
-        response = client.embeddings.create(
-            model=embedding_model,
-            input=batch_texts,
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # 本地模型参数
+        sent_model = SentenceTransformer("/data/guqiwen/CDRec/data/models/all-mpnet-base-v2", device=device)
+        sent_model.eval()
+
+        with torch.no_grad():
+            embeddings = sent_model.encode(
+                ordered_texts,
+                batch_size=batch_size,
+                convert_to_numpy=True,
+                show_progress_bar=True,
+                normalize_embeddings=normalize,
+            )
+
+        for raw_user, emb in zip(ordered_raw_users, embeddings):
+            raw_user_to_emb[raw_user] = emb.astype(np.float32)
+    elif 'text-embedding-3' in modality['emb_model']:
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=config["openai_api_key"],
+            base_url=config.get("openai_base_url", None),
         )
 
-        for raw_user, emb_obj in zip(batch_users, response.data):
-            raw_user_to_emb[raw_user] = np.asarray(
-                emb_obj.embedding, dtype=np.float32
+        for start in range(0, num_users, batch_size):
+            end = min(start + batch_size, num_users)
+
+            batch_texts = ordered_texts[start:end]
+            batch_users = ordered_raw_users[start:end]
+
+            response = client.embeddings.create(
+                model=embedding_model,
+                input=batch_texts,
             )
+
+            for raw_user, emb_obj in zip(batch_users, response.data):
+                emb = np.asarray(emb_obj.embedding, dtype=np.float32)
+
+                if normalize:
+                    emb = emb / (np.linalg.norm(emb) + 1e-12)
+
+                raw_user_to_emb[raw_user] = emb
 
     # Sanity check
     assert len(raw_user_to_emb) == len(ordered_raw_users), \
