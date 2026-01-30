@@ -94,9 +94,9 @@ class LLM_Diff_interaction_as_condition_mask_both_tag(GeneralRecommender):
         # 2. tgt item emb（去掉 padding 0）
         item_emb = self.tgt_item_text_emb[1:]  # [I_t, D]
 
-        # 3. 相似度矩阵（余弦相似度）
-        user_emb = F.normalize(user_emb, dim=1)
-        item_emb = F.normalize(item_emb, dim=1)
+        # 3. 相似度矩阵
+        # user_emb = F.normalize(user_emb, dim=1)
+        # item_emb = F.normalize(item_emb, dim=1)
         sim = torch.matmul(user_emb, item_emb.T)  # [U_s, I_t]
 
         # 4. Top-K
@@ -314,20 +314,34 @@ class LLM_Diff_interaction_as_condition_mask_both_tag(GeneralRecommender):
                 i_list.append(i)
             pseudo_users = torch.tensor(u_list, device=self.device)
             pseudo_items = torch.tensor(i_list, device=self.device)
-
-            u_emb = self.emb_user(pseudo_users)
-            i_emb = self.emb_item_tgt(pseudo_items)
-
             # 给src-only用户负采样tgt域物品
             neg_items = self.sample_tgt_neg_excluding_pseudo(
                 pseudo_users,
                 self.num_items_tgt
             )
+
+            u_pseudo = self.emb_user(pseudo_users)
+            # 取 pseudo_users 的 src/tgt 历史（src-user space）
+            hist_src_items = self.history_src_user_src[pseudo_users]  # [Bp, L]
+            hist_tgt_items = self.history_src_user_tgt[pseudo_users]  # [Bp, L]
+            hist_src_items = self.batch_random_mask(hist_src_items, self.config['mask_rate'], min_keep=1)
+            hist_tgt_items = self.batch_random_mask(hist_tgt_items, self.config['mask_rate'], min_keep=1)
+            hist_src = self.emb_item_src(hist_src_items)  # [Bp, L, D]
+            hist_tgt = self.emb_item_tgt(hist_tgt_items)  # [Bp, L, D]
+            cond_src = self.src_interaction_agg(hist_src, u_pseudo)  # [Bp, D]
+            cond_tgt = self.tgt_interaction_agg(hist_tgt, u_pseudo)  # [Bp, D]
+            Bp = u_pseudo.size(0)
+            t_pseudo = torch.randint(low=0, high=self.diff_tgt.timesteps, size=(Bp,), device=u_pseudo.device)
+            diff_loss_pseudo, u_pseudo_denoised = self.diff_tgt.p_losses(
+                x_start=u_pseudo, t=t_pseudo, cond_src=cond_src, cond_tgt=cond_tgt, loss_type="l2"
+            )
+            u_pseudo_final = u_pseudo + self.config["lambda_user_emb"] * u_pseudo_denoised  # 残差连接
+
+            i_emb = self.emb_item_tgt(pseudo_items)  # [Bp, D]
             neg_emb = self.emb_item_tgt(neg_items)
 
-            pos_score = (u_emb * i_emb).sum(dim=-1)
-            neg_score = (u_emb * neg_emb).sum(dim=-1)
-
+            pos_score = (u_pseudo_final * i_emb).sum(dim=-1)
+            neg_score = (u_pseudo_final * neg_emb).sum(dim=-1)
             pseudo_loss = self.bpr_loss(pos_score, neg_score)
 
         # loss = loss_rec + loss_dif + loss_pseudo
@@ -804,9 +818,9 @@ def _build_user_prompt_string(user_profile_string: dict) -> str:
         prompt_str (str)
     """
     return (
-        "INTERACTIONS FROM CLOTHING:\n"
-        f"{user_profile_string['src']}\n\n"
         "INTERACTIONS FROM SPORTS:\n"
+        f"{user_profile_string['src']}\n\n"
+        "INTERACTIONS FROM CLOTHING:\n"
         f"{user_profile_string['tgt']}"
     )
 
@@ -1336,12 +1350,12 @@ def generate_CrossDomain_semantics_both_tag_final_embs(config, modality, interac
 CROSSDOMAIN_USER_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
 Your task is to summarize a user's interests based on their interactions with items from two different types of product categories.
-One category is about clothing, shoes and jewelry.
-The other category is about sports and outdoors.
+One category is about sports and outdoors.
+The other category is about clothing, shoes and jewelry.
 
 The information I will give you:
-INTERACTIONS FROM CLOTHING: A LIST of user interactions with items related to clothing, shoes and jewelry.
-INTERACTIONS FROM SPORTS: A LIST of user interactions with items related to sports and outdoors.
+INTERACTIONS FROM SPORTS: A LIST of user interactions with items related to clothing, shoes and jewelry.
+INTERACTIONS FROM CLOTHING: A LIST of user interactions with items related to sports and outdoors.
 
 Each interaction is described in JSON format with the following attributes, where missing values are set to "None".
 The attributes include the item's information and the user's review on that item:
@@ -1377,7 +1391,7 @@ Requirements:
 
 
 
-SRC_ITEM_SYSTEM_PROMPT = """
+TGT_ITEM_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
 Your task is to analyze ONE product item related to clothing, shoes, and jewelry,
 and summarize what types of users this item is likely to attract.
@@ -1413,7 +1427,7 @@ Requirements:
 
 
 
-TGT_ITEM_SYSTEM_PROMPT = """
+SRC_ITEM_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
 Your task is to analyze ONE product item related to sports and outdoors,
 and summarize what types of users this item is likely to attract.
