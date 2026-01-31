@@ -6,16 +6,16 @@ import torch.nn as nn
 class AbstractRecommender(nn.Module):
     r"""Base class for all models
     """
-    def pre_epoch_processing(self):
+    def pre_epoch_processing(self, epoch_idx):
         pass
 
-    def post_epoch_processing(self):
+    def post_epoch_processing(self, epoch_idx):
         pass
 
-    def pre_batch_processing(self):
+    def pre_batch_processing(self, epoch_idx, batch_idx):
         pass
 
-    def post_batch_processing(self):
+    def post_batch_processing(self, epoch_idx, batch_idx):
         pass
 
     def set_train_stage(self, stage_id):

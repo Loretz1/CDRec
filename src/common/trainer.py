@@ -161,7 +161,7 @@ class Trainer(AbstractTrainer):
         for batch_idx, interaction in enumerate(train_data):
             # check the valid of the interaction
             # self._check_interaction_valid(train_data, interaction)
-            self.model.pre_batch_processing()
+            self.model.pre_batch_processing(epoch_idx,batch_idx)
 
             self.optimizer.zero_grad()
             losses = loss_func(interaction, epoch_idx)
@@ -183,7 +183,7 @@ class Trainer(AbstractTrainer):
                 clip_grad_norm_(self.model.parameters(), **self.clip_grad_norm)
             self.optimizer.step()
             loss_batches.append(loss.detach())
-            self.model.post_batch_processing()
+            self.model.post_batch_processing(epoch_idx,batch_idx)
             # for test
             # if batch_idx == 0:
             #    break
@@ -308,7 +308,7 @@ class Trainer(AbstractTrainer):
         for epoch_idx in range(self.start_epoch, self.epochs):
             # train
             training_start_time = time()
-            self.model.pre_epoch_processing()
+            self.model.pre_epoch_processing(epoch_idx)
             train_loss, _ = self._train_epoch(train_data, epoch_idx, writer=writer)
             if torch.is_tensor(train_loss):
                 # get nan loss
@@ -324,7 +324,7 @@ class Trainer(AbstractTrainer):
             writer.add_scalar(f"Stage{stage_id} training Loss", self.train_loss_dict[(stage_id, epoch_idx)], epoch_idx)  # tb
             train_loss_output = \
                 self._generate_train_loss_output(stage_id, epoch_idx, training_start_time, training_end_time, train_loss)
-            post_info = self.model.post_epoch_processing()
+            post_info = self.model.post_epoch_processing(epoch_idx)
             if verbose:
                 self.logger.info(train_loss_output)
                 if post_info is not None:

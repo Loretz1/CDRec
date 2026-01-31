@@ -89,7 +89,7 @@ class Disco(GeneralRecommender):
         _ema_update(self.intent_gnn_src, self.intent_gnn_src_t)
         _ema_update(self.intent_gnn_tgt, self.intent_gnn_tgt_t)
 
-    def post_batch_processing(self):
+    def post_batch_processing(self, epoch_idx, batch_idx):
         self._momentum_update()
 
     def encode_intents(self, emb_user_src, emb_item_src, emb_user_tgt, emb_item_tgt, base_gnn_src, base_gnn_tgt,
