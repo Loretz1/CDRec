@@ -35,18 +35,18 @@ modalities:
 
 # 3. Fixed Model Parameters Setting
 embedding_dim: 64
-sa_layers: 2
-sa_heads: 4
-dropout: 0
-
-alpha: 0.0001
-beta: 1
+user_llm_emb_w: 0.001
+item_llm_emb_w: 0.001
 gamma: 0.2
 tau: 0.2
 
 # 4. Model Hyperparameter Grid Search Setting
+alpha: [0.00001, 0.001, 0.01, 0.1]
+beta: [0.00001]
 history_len: [40]
 
 hyper_parameters:
   - "training_stages.0.learning_rate"
+  - "alpha"
+  - "beta"
   - "history_len"

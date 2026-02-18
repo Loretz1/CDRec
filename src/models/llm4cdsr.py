@@ -79,12 +79,9 @@ class LLM4CDSR(GeneralRecommender):
 
         # ========= 5) Tri-thread encoders =========
         # three threads: src sequence, tgt sequence, mixed sequence
-        n_layers = int(config.get("sa_layers", 2))
-        n_heads = int(config.get("sa_heads", 4))
-        dropout = float(config.get("dropout", 0.0))
-        self.encoder_src = SimpleSAEncoder(self.embedding_dim, n_heads=n_heads, n_layers=n_layers, dropout=dropout)
-        self.encoder_tgt = SimpleSAEncoder(self.embedding_dim, n_heads=n_heads, n_layers=n_layers, dropout=dropout)
-        self.encoder_global = SimpleSAEncoder(self.embedding_dim, n_heads=n_heads, n_layers=n_layers, dropout=dropout)
+        self.encoder_src = SimpleSAEncoder(self.embedding_dim)
+        self.encoder_tgt = SimpleSAEncoder(self.embedding_dim)
+        self.encoder_global = SimpleSAEncoder(self.embedding_dim)
 
         # ========= 6) init =========
         self.apply(xavier_uniform_initialization)
@@ -162,6 +159,28 @@ class LLM4CDSR(GeneralRecommender):
                 if len(items) > 0:
                     self.history_tgt_user_src[u, :len(items)] = torch.LongTensor(items)
 
+    def _to_global_user_id(self, users: torch.Tensor, is_warm: bool) -> torch.Tensor:
+        """
+        users: [B] from sampler space
+        is_warm:
+          True  -> users are tgt-space ids
+          False -> users are src-space ids
+        return:
+          global union-space ids for self.emb_user
+        """
+        if not is_warm:
+            return users  # src-space id already in union encoding for overlap+src-only
+
+        # warm: tgt-space users
+        # overlap users stay same: 1..num_overlap
+        # tgt-only users (id > num_overlap) need offset by (num_users_src - num_overlap)
+        offset = (self.num_users_src - self.num_users_overlap)
+        return torch.where(
+            users <= self.num_users_overlap,
+            users,
+            users + offset
+        )
+
     def calculate_loss(self, interaction, epoch_idx):
         """
         Paper:
@@ -205,7 +224,9 @@ class LLM4CDSR(GeneralRecommender):
             seqG = torch.cat([gA, gB], dim=1)                     # [B, 2L, d]
             maskG = torch.cat([(seqA_g_ids != 0), (seqB_g_ids != 0)], dim=1)  # [B, 2L]
             u_til = self.encoder_global(seqG, maskG)              # [B, d]
-            return uA, u_til
+
+            u_tilde = self.config['user_llm_emb_w'] * u_til + self.emb_user(u)  # [B, d]
+            return uA, u_tilde
 
         def encode_tgt_users(u: torch.Tensor):
             """
@@ -227,7 +248,10 @@ class LLM4CDSR(GeneralRecommender):
             seqG = torch.cat([gA, gB], dim=1)                     # [B, 2L, d]
             maskG = torch.cat([(seqA_g_ids != 0), (seqB_g_ids != 0)], dim=1)
             u_til = self.encoder_global(seqG, maskG)              # [B, d]
-            return uB, u_til
+
+            u_global_users = self._to_global_user_id(u, is_warm=False)  # [B]
+            u_tilde = self.config['user_llm_emb_w'] * u_til + self.emb_user(u_global_users)
+            return uB, u_tilde
 
         # ---------- (1) SRS loss for src domain: Eq.(3)(4) ----------
         uA, uG_src = encode_src_users(users_src)                  # [B1,d], [B1,d]
@@ -236,8 +260,11 @@ class LLM4CDSR(GeneralRecommender):
         eA_pos = self.emb_item_src(pos_src)                       # [B1,d]
         eA_neg = self.emb_item_src(neg_src)                       # [B1,d]
         # global item emb e~_i = adapter(e_i^LLM)
-        g_pos = self.adapter(self.src_item_text_emb[pos_src])     # [B1,d]
-        g_neg = self.adapter(self.src_item_text_emb[neg_src])     # [B1,d]
+        # LLM global embedding
+        g_pos_llm = self.adapter(self.src_item_text_emb[pos_src])
+        g_neg_llm = self.adapter(self.src_item_text_emb[neg_src])
+        g_pos = self.config['item_llm_emb_w'] * g_pos_llm + eA_pos
+        g_neg = self.config['item_llm_emb_w'] * g_neg_llm + eA_neg
 
         # Eq.(3) logit fusion is concat-dot = dot(u~,e~)+dot(uA,eA)
         pos_score_src = (uG_src * g_pos).sum(dim=-1) + (uA * eA_pos).sum(dim=-1)  # [B1]
@@ -249,8 +276,11 @@ class LLM4CDSR(GeneralRecommender):
 
         eB_pos = self.emb_item_tgt(pos_tgt)
         eB_neg = self.emb_item_tgt(neg_tgt)
-        g_pos2 = self.adapter(self.tgt_item_text_emb[pos_tgt])
-        g_neg2 = self.adapter(self.tgt_item_text_emb[neg_tgt])
+
+        g_pos2_llm = self.adapter(self.tgt_item_text_emb[pos_tgt])
+        g_neg2_llm = self.adapter(self.tgt_item_text_emb[neg_tgt])
+        g_pos2 = self.config['item_llm_emb_w'] * g_pos2_llm + eB_pos
+        g_neg2 = self.config['item_llm_emb_w'] * g_neg2_llm + eB_neg
 
         pos_score_tgt = (uG_tgt * g_pos2).sum(dim=-1) + (uB * eB_pos).sum(dim=-1)
         neg_score_tgt = (uG_tgt * g_neg2).sum(dim=-1) + (uB * eB_neg).sum(dim=-1)
@@ -319,6 +349,8 @@ class LLM4CDSR(GeneralRecommender):
         seq_global = torch.cat([g_src, g_tgt], dim=1)  # [B, 2L, d]
         mask_global = torch.cat([seq_src_ids != 0, seq_tgt_ids != 0], dim=1)  # [B, 2L]
         u_tilde = self.encoder_global(seq_global, mask_global)  # [B, d]
+        u_global_users = self._to_global_user_id(users, is_warm=is_warm)
+        u_tilde = self.config['user_llm_emb_w'] * u_tilde + self.emb_user(u_global_users)
 
         # -------- local target preference u_B --------
         # For warm users: real tgt history
@@ -331,7 +363,8 @@ class LLM4CDSR(GeneralRecommender):
         # local tgt items: e_i^B
         E_local = self.emb_item_tgt.weight  # [It+1, d]
         # global tgt items: e_tilde_i = adapter(E_LLM_i)
-        E_global = self.adapter(self.tgt_item_text_emb)  # [It+1, d]
+        E_llm = self.adapter(self.tgt_item_text_emb)  # [It+1, d]
+        E_global = self.config['item_llm_emb_w'] * E_llm + E_local  # fused global item embedding
 
         # -------- Eq.(3)-style fusion scoring --------
         scores = torch.matmul(u_tilde, E_global.t()) + torch.matmul(u_B, E_local.t())  # [B, It+1]
@@ -340,50 +373,32 @@ class LLM4CDSR(GeneralRecommender):
 
 
 class SimpleSAEncoder(nn.Module):
-    def __init__(self, d_model: int, n_heads: int = 4, n_layers: int = 2, dropout: float = 0.0):
+    def __init__(self, d_model: int):
         super().__init__()
         self.d_model = d_model
-        self.n_layers = n_layers
-        self.attn = nn.ModuleList([
-            nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads, dropout=dropout, batch_first=True)
-            for _ in range(n_layers)
-        ])
-        self.ln = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(n_layers)])
-        self.ff = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(d_model, 4 * d_model),
-                nn.GELU(),
-                nn.Linear(4 * d_model, d_model),
-                nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
-            )
-            for _ in range(n_layers)
-        ])
-        self.ln2 = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(n_layers)])
 
     def forward(self, x: torch.Tensor, pad_mask: torch.Tensor):
         """
         x: [B, L, D]
-        pad_mask: [B, L]  True means valid (not padding)
-        return: [B, D] pooled user representation
+        pad_mask: [B, L]  True = valid
+        return: [B, D]
         """
-        # MultiheadAttention 的 key_padding_mask: True 表示要mask掉（padding）
-        key_padding_mask = ~pad_mask  # [B, L]
 
-        for i in range(self.n_layers):
-            # attention block
-            h = self.ln[i](x)
-            attn_out, _ = self.attn[i](h, h, h, key_padding_mask=key_padding_mask, need_weights=False)
-            x = x + attn_out
+        # 如果全 padding，直接返回 0
+        valid_counts = pad_mask.sum(dim=1)  # [B]
 
-            # FFN block
-            h2 = self.ln2[i](x)
-            x = x + self.ff[i](h2)
-
-        # mean pool over valid positions
-        mask = pad_mask.unsqueeze(-1)  # [B, L, 1]
+        # mask
+        mask = pad_mask.unsqueeze(-1).float()  # [B, L, 1]
         x = x * mask
-        denom = mask.sum(dim=1).clamp(min=1)
-        return x.sum(dim=1) / denom
+
+        # mean pool
+        denom = valid_counts.clamp(min=1).unsqueeze(-1).float()
+        pooled = x.sum(dim=1) / denom
+
+        # 对完全空序列用户，强制设为 0
+        pooled[valid_counts == 0] = 0.0
+
+        return pooled
 
 
 def _info_nce_symmetric(x: torch.Tensor, y: torch.Tensor, temperature: float) -> torch.Tensor:
@@ -623,7 +638,7 @@ def extract_CrossDomain_semantics_LLM4CDSR_modality_data(
 
     # ---- clustering ----
     from sklearn.cluster import KMeans
-    K = int(modality.get("cluster_k", 5))
+    K = int(modality.get("cluster_k", 2))
     kmeans = KMeans(n_clusters=K, random_state=999, n_init="auto")
     cluster_ids = kmeans.fit_predict(all_item_embs)
 
