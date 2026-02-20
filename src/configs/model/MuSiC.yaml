@@ -15,12 +15,12 @@ cold_start_eval: True # Whether to enable cold start user evaluation
 # (state, epochs, train_batch_size, learner, learning_rate, learning_rate_scheduler, weight_decay) is required for each stage
 # clip_grad_norm is optional
 training_stages:
-  - name: target_target
-    state: TARGET
+  - name: target_both
+    state: BOTH
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.001, 0.1]
+    learning_rate: [0.001]
     learning_rate_scheduler: [1.0, 50]
     weight_decay: 0
 
@@ -35,19 +35,25 @@ modalities:
 
 # 3. Fixed Model Parameters Setting
 embedding_dim: 64
-T: 20
-beta_start: 1e-4
+timesteps: 20
+beta_start: 0.0001
 beta_end: 0.7
-history_len: 150
+dropout: 0.3
 
 # 4. Model Hyperparameter Grid Search Setting
-w_u: [ 0.001 ]
-lambda_diff: [ 0.1 ]
-id_w: [ 0.99]
+diff_weight: [0.15]
+beta_sche: ["sqrt"]
+lambda_user_emb: [1]
+aggregator: ['user_attention']   # mean, user_attention
+history_len: [150]
+mask_rate: [0.5]
 
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.0.learning_rate"
-  - "w_u"
-  - "lambda_diff"
-  - "id_w"
+  - "diff_weight"
+  - "lambda_user_emb"
+  - "beta_sche"
+  - "aggregator"
+  - "history_len"
+  - "mask_rate"
