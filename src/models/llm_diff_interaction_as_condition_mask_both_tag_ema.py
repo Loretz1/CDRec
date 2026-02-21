@@ -900,9 +900,9 @@ def _build_user_prompt_string(user_profile_string: dict) -> str:
         prompt_str (str)
     """
     return (
-        "INTERACTIONS FROM HEALTH:\n"
+        "INTERACTIONS FROM ELECTRONICS:\n"
         f"{user_profile_string['src']}\n\n"
-        "INTERACTIONS FROM BABY:\n"
+        "INTERACTIONS FROM PHONES:\n"
         f"{user_profile_string['tgt']}"
     )
 
@@ -1322,6 +1322,40 @@ def generate_CrossDomain_semantics_both_tag_embs(
     if num_flat == 0:
         raise ValueError("No tag texts to embed.")
 
+    num_users = len(ordered_raw_users)
+    num_items_total = len(ordered_src_items) + len(ordered_tgt_items)
+    # 下面 emb_dim 还不知道，等拿到第一批 embedding 再初始化
+    sum_user_embs = None
+    cnt_user = np.zeros((num_users,), dtype=np.int32)
+    sum_item_embs = None
+    cnt_item = np.zeros((num_items_total,), dtype=np.int32)
+    num_user_tags = len(flat_texts)  # user tags 在 all_flat_texts 里的前缀长度
+
+    # if 'text-embedding-3' in modality['emb_model']:
+    #     from openai import OpenAI
+    #
+    #     client = OpenAI(
+    #         api_key=config["openai_api_key"],
+    #         base_url=config.get("openai_base_url", None),
+    #     )
+    #
+    #     flat_embs = []
+    #     for start in range(0, num_flat, batch_size):
+    #         end = min(start + batch_size, num_flat)
+    #         batch_texts = all_flat_texts[start:end]
+    #
+    #         response = client.embeddings.create(
+    #             model=embedding_model,
+    #             input=batch_texts,
+    #         )
+    #
+    #         for emb_obj in response.data:
+    #             emb = np.asarray(emb_obj.embedding, dtype=np.float32)
+    #             if normalize:
+    #                 emb = emb / (np.linalg.norm(emb) + 1e-12)
+    #             flat_embs.append(emb)
+    #
+    #     flat_embs = np.stack(flat_embs, axis=0)  # [num_tags, D]
     if 'text-embedding-3' in modality['emb_model']:
         from openai import OpenAI
 
@@ -1330,7 +1364,6 @@ def generate_CrossDomain_semantics_both_tag_embs(
             base_url=config.get("openai_base_url", None),
         )
 
-        flat_embs = []
         for start in range(0, num_flat, batch_size):
             end = min(start + batch_size, num_flat)
             batch_texts = all_flat_texts[start:end]
@@ -1340,59 +1373,90 @@ def generate_CrossDomain_semantics_both_tag_embs(
                 input=batch_texts,
             )
 
-            for emb_obj in response.data:
+            # response.data 的顺序与 input 对齐
+            for j, emb_obj in enumerate(response.data):
                 emb = np.asarray(emb_obj.embedding, dtype=np.float32)
+
                 if normalize:
                     emb = emb / (np.linalg.norm(emb) + 1e-12)
-                flat_embs.append(emb)
 
-        flat_embs = np.stack(flat_embs, axis=0)  # [num_tags, D]
+                # 第一次拿到 embedding 时初始化 sum arrays
+                if sum_user_embs is None:
+                    emb_dim = emb.shape[0]
+                    sum_user_embs = np.zeros((num_users, emb_dim), dtype=np.float32)
+                    sum_item_embs = np.zeros((num_items_total, emb_dim), dtype=np.float32)
 
-    # 重新从tag emb，通过mean pooling聚合成user text emb
-    emb_dim = flat_embs.shape[1]
-    num_users = len(ordered_raw_users)
-    num_user_tags = len(flat_texts)
+                global_idx = start + j  # 这条 embedding 在 all_flat_texts 中的全局位置
 
-    sum_embs = np.zeros((num_users, emb_dim), dtype=np.float32)
-    cnt = np.zeros((num_users,), dtype=np.int32)
+                # 0 .. num_user_tags-1 是 user tags
+                if global_idx < num_user_tags:
+                    uidx = flat_user_idx[global_idx]
+                    sum_user_embs[uidx] += emb
+                    cnt_user[uidx] += 1
+                else:
+                    # item tags 的 idx 从 0 开始数，所以要减去 num_user_tags
+                    k = global_idx - num_user_tags
+                    iidx = flat_item_idx[k]  # 这是在 [src_items + tgt_items] 的 index
+                    sum_item_embs[iidx] += emb
+                    cnt_item[iidx] += 1
+    else:
+        raise NotImplementedError("Only OpenAI embedding models are handled here.")
 
-    for i in range(num_user_tags):
-        uidx = flat_user_idx[i]
-        sum_embs[uidx] += flat_embs[i]
-        cnt[uidx] += 1
+    # # 重新从tag emb，通过mean pooling聚合成user text emb
+    # emb_dim = flat_embs.shape[1]
+    # num_users = len(ordered_raw_users)
+    # num_user_tags = len(flat_texts)
+    #
+    # sum_embs = np.zeros((num_users, emb_dim), dtype=np.float32)
+    # cnt = np.zeros((num_users,), dtype=np.int32)
+    #
+    # for i in range(num_user_tags):
+    #     uidx = flat_user_idx[i]
+    #     sum_embs[uidx] += flat_embs[i]
+    #     cnt[uidx] += 1
+    #
+    # raw_user_to_emb = {}
+    #
+    # for uidx, raw_user in enumerate(ordered_raw_users):
+    #     user_emb = sum_embs[uidx] / cnt[uidx]
+    #     raw_user_to_emb[raw_user] = user_emb
+    #
+    # # 聚合item
+    # num_items_total = len(ordered_src_items) + len(ordered_tgt_items)
+    #
+    # sum_item_embs = np.zeros((num_items_total, emb_dim), dtype=np.float32)
+    # cnt_item = np.zeros((num_items_total,), dtype=np.int32)
+    #
+    # item_offset = num_user_tags  # item embeddings start after user tags
+    #
+    # for i in range(len(flat_item_texts)):
+    #     idx = flat_item_idx[i]
+    #     sum_item_embs[idx] += flat_embs[item_offset + i]
+    #     cnt_item[idx] += 1
+    #
+    # item_embs = sum_item_embs / cnt_item[:, None]
+    #
+    # # Sanity check
+    # assert len(raw_user_to_emb) == len(ordered_raw_users), \
+    #     "Some user embeddings are missing after batch encoding"
 
-    raw_user_to_emb = {}
+    if sum_user_embs is None:
+        raise ValueError("Embedding failed: sum_user_embs was not initialized.")
 
-    for uidx, raw_user in enumerate(ordered_raw_users):
-        user_emb = sum_embs[uidx] / cnt[uidx]
-        raw_user_to_emb[raw_user] = user_emb
+    # 防止除 0（理论上不会，因为每个 user/item 至少 1 个 tag）
+    cnt_user_safe = np.clip(cnt_user, 1, None).astype(np.float32)
+    cnt_item_safe = np.clip(cnt_item, 1, None).astype(np.float32)
 
-    # 聚合item
-    num_items_total = len(ordered_src_items) + len(ordered_tgt_items)
-
-    sum_item_embs = np.zeros((num_items_total, emb_dim), dtype=np.float32)
-    cnt_item = np.zeros((num_items_total,), dtype=np.int32)
-
-    item_offset = num_user_tags  # item embeddings start after user tags
-
-    for i in range(len(flat_item_texts)):
-        idx = flat_item_idx[i]
-        sum_item_embs[idx] += flat_embs[item_offset + i]
-        cnt_item[idx] += 1
-
-    item_embs = sum_item_embs / cnt_item[:, None]
-
-    # Sanity check
-    assert len(raw_user_to_emb) == len(ordered_raw_users), \
-        "Some user embeddings are missing after batch encoding"
+    user_embeddings = sum_user_embs / cnt_user_safe[:, None]
+    item_embs = sum_item_embs / cnt_item_safe[:, None]
 
     # =========================================================
     # Step 4: stack embeddings in final order
     # =========================================================
-    user_embeddings = np.stack(
-        [raw_user_to_emb[raw_user] for raw_user in ordered_raw_users],
-        axis=0
-    )
+    # user_embeddings = np.stack(
+    #     [raw_user_to_emb[raw_user] for raw_user in ordered_raw_users],
+    #     axis=0
+    # )
 
     final_embeddings = np.concatenate(
         [
@@ -1432,12 +1496,12 @@ def generate_CrossDomain_semantics_both_tag_final_embs(config, modality, interac
 CROSSDOMAIN_USER_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
 Your task is to summarize a user's interests based on their interactions with items from two different types of product categories.
-One category is about health and personal care.
-The other category is about baby.
+One category is about electronics.
+The other category is about cell phones and accessories.
 
 The information I will give you:
-INTERACTIONS FROM HEALTH: A LIST of user interactions with items related to health and personal care.
-INTERACTIONS FROM BABY: A LIST of user interactions with items related to baby.
+INTERACTIONS FROM ELECTRONICS: A LIST of user interactions with items related to electronics.
+INTERACTIONS FROM PHONES: A LIST of user interactions with items related to cell phones and accessories.
 
 Each interaction is described in JSON format with the following attributes, where missing values are set to "None".
 The attributes include the item's information and the user's review on that item:
@@ -1475,7 +1539,7 @@ Requirements:
 
 SRC_ITEM_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
-Your task is to analyze ONE product item related to health and personal care,
+Your task is to analyze ONE product item related to electronics,
 and summarize what types of users this item is likely to attract.
 
 The information I will give you is the item's metadata in JSON format,
@@ -1511,7 +1575,7 @@ Requirements:
 
 TGT_ITEM_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
-Your task is to analyze ONE product item related to baby,
+Your task is to analyze ONE product item related to cell phones and accessories,
 and summarize what types of users this item is likely to attract.
 
 The information I will give you is the item's metadata in JSON format,
