@@ -25,7 +25,7 @@ training_stages:
     weight_decay: 0
 
 modalities:
-  - name: "CrossDomain_semantics_tag"
+  - name: "CrossDomain_semantics"
     emb_model: "text-embedding-3-large"
     emb_batch_size: 1024
     emb_dim: 3072
@@ -42,9 +42,16 @@ beta_end: 0.02
 log_model_suffix: warm
 
 # 4. Model Hyperparameter Grid Search Setting
-diff_weight: [ 0.5, 1, 2, 4, 6,8,10]
+#diff_weight: [ 0.5, 1, 2, 4, 6,8,10]
+#lambda_user_emb: [0.001, 0.1, 0.5, 1, 1.5]
+#beta_sche: ["linear", "exp", "cosine", "sqrt"]
+#contrastive_weight: [0.1]
+#tau: [0.1]
+diff_weight: [ 0.5]
 lambda_user_emb: [1]
 beta_sche: ["sqrt"]
+contrastive_weight: [0.05, 0.1]
+tau: [0.05, 0.1]
 
 # hyperparameter search space
 hyper_parameters:
@@ -52,3 +59,5 @@ hyper_parameters:
   - "diff_weight"
   - "lambda_user_emb"
   - "beta_sche"
+  - "contrastive_weight"
+  - "tau"

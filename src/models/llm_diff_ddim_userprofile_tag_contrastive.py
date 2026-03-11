@@ -7,13 +7,12 @@ from common.loss import BPRLoss
 import math
 import numpy as np
 
-class LLM_Diff_ddim(GeneralRecommender):
+class LLM_Diff_ddim_userprofile_tag_contrastive(GeneralRecommender):
     def __init__(self, config, dataloader):
-        super(LLM_Diff_ddim, self).__init__(config, dataloader)
+        super(LLM_Diff_ddim_userprofile_tag_contrastive, self).__init__(config, dataloader)
 
         self.config = config
         self.embedding_dim = config['embedding_dim']
-        self.diff_weight = config['diff_weight']
 
         self.emb_user = nn.Embedding(
             self.num_users_src + self.num_users_tgt - self.num_users_overlap + 1,
@@ -22,6 +21,21 @@ class LLM_Diff_ddim(GeneralRecommender):
         )
         self.emb_item_src = nn.Embedding(self.num_items_src + 1, self.embedding_dim, padding_idx=0)
         self.emb_item_tgt = nn.Embedding(self.num_items_tgt + 1, self.embedding_dim, padding_idx=0)
+
+        semantic_emb = dataloader.get_modality_embs()['CrossDomain_semantics_tag']
+        pad = torch.zeros(1, semantic_emb.shape[1], dtype=torch.float32)
+        semantic_emb = torch.cat([pad, torch.from_numpy(semantic_emb)], dim=0)
+        self.register_buffer(
+            "user_text_emb",
+            semantic_emb
+        )
+
+        # 映射文本emb -> id emb
+        text_dim = semantic_emb.shape[1]
+        self.text_mapper = nn.Sequential(
+            nn.Linear(text_dim, self.embedding_dim),
+            nn.LayerNorm(self.embedding_dim),
+        )
 
         self.diff_src = Diffusion(config)
         self.diff_tgt = Diffusion(config)
@@ -32,6 +46,18 @@ class LLM_Diff_ddim(GeneralRecommender):
         self.emb_user.weight.data[0, :] = 0
         self.emb_item_src.weight.data[0, :] = 0
         self.emb_item_tgt.weight.data[0, :] = 0
+
+    def info_nce_loss(self, z1, z2, tau=0.1):
+        """
+        z1, z2: [B, D]，正样本一一对应
+        """
+        z1 = F.normalize(z1, dim=-1)
+        z2 = F.normalize(z2, dim=-1)
+
+        logits = torch.matmul(z1, z2.t()) / tau  # [B, B]
+        labels = torch.arange(z1.size(0), device=z1.device)
+        loss = F.cross_entropy(logits, labels)
+        return loss
 
     def calculate_loss(self, interaction, epoch_idx):
         users_src = interaction['users_src']
@@ -45,6 +71,10 @@ class LLM_Diff_ddim(GeneralRecommender):
         u_src = self.emb_user(users_src)  # [B, D]
         i_pos_src = self.emb_item_src(pos_items_src)  # [B, D]
         i_neg_src = self.emb_item_src(neg_items_src)  # [B, D]
+
+        u_src_text = self.user_text_emb[users_src]  # [B, text_dim]
+        u_src_text = self.text_mapper(u_src_text)  # [B, D]
+        contrastive_loss_src = self.info_nce_loss(u_src, u_src_text, tau=self.config['tau'])
 
         # 这里t是随机采的，不是对称采样
         B = u_src.size(0)
@@ -64,6 +94,12 @@ class LLM_Diff_ddim(GeneralRecommender):
         i_pos_tgt = self.emb_item_tgt(pos_items_tgt)  # [B, D]
         i_neg_tgt = self.emb_item_tgt(neg_items_tgt)  # [B, D]
 
+        u_tgt_text = self.user_text_emb[users_tgt_global]
+        u_tgt_text = self.text_mapper(u_tgt_text)
+        contrastive_loss_tgt = self.info_nce_loss(
+            u_tgt, u_tgt_text, tau=self.config['tau']
+        )
+
         B = u_tgt.size(0)
         t_tgt = torch.randint(low=0, high=self.diff_tgt.timesteps, size=(B,), device=u_tgt.device)
         diff_loss_tgt, u_tgt_denoised = self.diff_tgt.p_losses(x_start=u_tgt, t=t_tgt, loss_type="l2")
@@ -74,7 +110,12 @@ class LLM_Diff_ddim(GeneralRecommender):
         bpr_loss_tgt = self.bpr_loss(pos_score_tgt, neg_score_tgt)
 
         # loss = loss_rec + loss_dif
-        loss = bpr_loss_src+ bpr_loss_tgt+ self.diff_weight * (diff_loss_src + diff_loss_tgt)
+        loss = (
+                bpr_loss_src
+                + bpr_loss_tgt
+                + self.config['diff_weight'] * (diff_loss_src + diff_loss_tgt)
+                + self.config['contrastive_weight'] * (contrastive_loss_src + contrastive_loss_tgt)
+        )
         return loss
 
     def full_sort_predict(self, interaction, is_warm):

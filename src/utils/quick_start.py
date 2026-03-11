@@ -104,8 +104,8 @@ def quick_start(model, dataset, domains, save_model=True):
              best_valid_score_cold, best_valid_result_cold, best_test_upon_valid_cold), (stage_train_time_total, stop_epoch) \
                 = trainer.fit(i, train_data, valid_data=valid_data, test_data=test_data, saved=save_model, writer=writer)
             logger.info(f"=Train time of stage {i} total %.2fs, train time of stage {i} average: %.2fs"
-                             % (stage_train_time_total, stage_train_time_total / (stop_epoch + 1)))
-            
+                        % (stage_train_time_total, stage_train_time_total / (stop_epoch + 1)))
+
             if not eval:
                 continue
 

@@ -51,7 +51,7 @@ log_model_suffix: warm
 # 4. Model Hyperparameter Grid Search Setting
 diff_weight: [ 0.5, 1, 2, 4, 6,8,10]
 lambda_user_emb: [0.001, 0.1, 0.5, 1, 1.5]
-beta_sche: ["linear", "exp", "cosine", "sqrt"]
+beta_sche: ["exp", "cosine", "sqrt"]
 
 # hyperparameter search space
 hyper_parameters:

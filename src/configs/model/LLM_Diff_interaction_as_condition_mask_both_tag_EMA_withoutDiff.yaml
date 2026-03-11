@@ -35,38 +35,28 @@ modalities:
 
 # 3. Fixed Model Parameters Setting
 embedding_dim: 64
-timesteps: [ 20 ]
+timesteps: 20
 beta_start: 0.0001
 beta_end: 0.7
 dropout: 0.3
 
-top_k_pos: [5]         # 每个 src-only 用户生成多少个 tgt 伪正
-pseudo_start_epoch: 0        # 从第 T 个 epoch 开始用伪交互
+top_k_pos: 1                 # 每个 src-only 用户生成多少个 tgt 伪正
+pseudo_start_epoch: 3        # 从第 T 个 epoch 开始用伪交互
 pseudo_num_per_batch: 16        # 每个 batch 里伪交互采样个数
-#pseudo_rec_weight: 0.001         # 伪交互 rec loss 权重
+pseudo_rec_weight: 0.001         # 伪交互 rec loss 权重
 ema_momentum: 0.999             # EMA更新权重
 pseudo_update_interval: 5      # 使用EMA更新伪交互集合的batch间隔
-#log_model_suffix: warm
+log_model_suffix: ablation3
 
 # 4. Model Hyperparameter Grid Search Setting
-beta_sche: ['sqrt']
-T_w: [ 2000, 3000, 4000, 5000, 6000, 7000 ]
-
-diff_weight: [0.5]
-lambda_user_emb: [0.001]
+lambda_user_emb: [1]
 aggregator: ['user_attention']   # mean, user_attention
-history_len: [40]
-mask_rate: [0.3]
-#log_model_suffix: hyper_cosine
+history_len: [150]
+mask_rate: [0.5]
 
 # hyperparameter search space
 hyper_parameters:
-  - "timesteps"
-  - "top_k_pos"
-  - "beta_sche"
-  - "T_w"
   - "training_stages.0.learning_rate"
-  - "diff_weight"
   - "lambda_user_emb"
   - "aggregator"
   - "history_len"

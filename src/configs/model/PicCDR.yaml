@@ -37,12 +37,12 @@ feature_dim: 64
 #log_model_suffix: without_semantic
 
 # 4. Model Hyperparameter Grid Search Setting
-tau: [ 0.2 ]
-lambda_dda: [ 0, 0.1, 0.5, 1, 1.5 ]
+tau: [ 0.05, 0.2 ]
+lambda_dda: [ 0.1, 0.5 ]
 lambda_sem: [0.3, 1]
-lambda_mul_maxTerm: [ 0,0.1,0.3,1 ]
-lambda_dis: [ 0,0.1, 0.3,1 ]
-lambda_mul_minTerm: [ 0,0.1, 0.3,1 ]
+lambda_mul_maxTerm: [ 0.1, 0.5 ]
+lambda_dis: [ 0.1, 0.5 ]
+lambda_mul_minTerm: [ 0.1, 0.5 ]
 
 # hyperparameter search space
 hyper_parameters:

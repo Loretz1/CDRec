@@ -162,7 +162,7 @@ class LLM_Diff_interaction_as_condition_mask(GeneralRecommender):
         t_src = torch.randint(low=0, high=self.diff_src.timesteps, size=(B,), device=u_src.device)
         diff_loss_src, u_src_denoised = self.diff_src.p_losses(x_start=u_src, t=t_src, cond_src=cond_src,
                                                                cond_tgt=cond_tgt, loss_type="l2")
-        u_src_final = u_src + u_src_denoised # 残差连接
+        u_src_final = u_src + self.config["lambda_user_emb"] * u_src_denoised # 残差连接
 
         pos_score_src = (u_src_final * i_pos_src).sum(dim=-1)
         neg_score_src = (u_src_final * i_neg_src).sum(dim=-1)
@@ -195,7 +195,7 @@ class LLM_Diff_interaction_as_condition_mask(GeneralRecommender):
         t_tgt = torch.randint(low=0, high=self.diff_tgt.timesteps, size=(B,), device=u_tgt.device)
         diff_loss_tgt, u_tgt_denoised = self.diff_tgt.p_losses(x_start=u_tgt, t=t_tgt, cond_src=cond_src,
                                                                cond_tgt=cond_tgt, loss_type="l2")
-        u_tgt_final = u_tgt + u_tgt_denoised # 残差连接
+        u_tgt_final = u_tgt + self.config["lambda_user_emb"] * u_tgt_denoised # 残差连接
 
         pos_score_tgt = (u_tgt_final * i_pos_tgt).sum(dim=-1)
         neg_score_tgt = (u_tgt_final * i_neg_tgt).sum(dim=-1)
@@ -227,7 +227,7 @@ class LLM_Diff_interaction_as_condition_mask(GeneralRecommender):
         cond_tgt = self.tgt_interaction_agg(hist_tgt, u)
         _, u_denoised, _, _, _ = self.diff_tgt.sample(x_start=u, cond_src=cond_src, cond_tgt=cond_tgt)
 
-        u_final = u + u_denoised
+        u_final = u + self.config["lambda_user_emb"] * u_denoised
 
         item_emb = self.emb_item_tgt.weight
         scores = torch.matmul(u_final, item_emb.t())

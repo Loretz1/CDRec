@@ -22,7 +22,7 @@ training_stages:
     learner: adam
     learning_rate: [0.001]
     learning_rate_scheduler: [1.0, 50]
-    weight_decay: 0
+    weight_decay: 0.000001
 
 modalities:
   - name: "CrossDomain_semantics_both_tag"
@@ -34,40 +34,35 @@ modalities:
     enabled: true
 
 # 3. Fixed Model Parameters Setting
-embedding_dim: 64
-timesteps: [ 20 ]
-beta_start: 0.0001
-beta_end: 0.7
+feature_dim: 64
 dropout: 0.3
+lambda_a: 0.5
 
-top_k_pos: [5]         # 每个 src-only 用户生成多少个 tgt 伪正
-pseudo_start_epoch: 0        # 从第 T 个 epoch 开始用伪交互
+timesteps: 20
+beta_start: 0.0001
+beta_end: 0.02
+
+top_k_pos: 5                 # 每个 src-only 用户生成多少个 tgt 伪正
+pseudo_start_epoch: 80        # 从第 T 个 epoch 开始用伪交互
 pseudo_num_per_batch: 16        # 每个 batch 里伪交互采样个数
-#pseudo_rec_weight: 0.001         # 伪交互 rec loss 权重
+pseudo_rec_weight: 0.0001         # 伪交互 rec loss 权重
 ema_momentum: 0.999             # EMA更新权重
 pseudo_update_interval: 5      # 使用EMA更新伪交互集合的batch间隔
-#log_model_suffix: warm
 
 # 4. Model Hyperparameter Grid Search Setting
-beta_sche: ['sqrt']
-T_w: [ 2000, 3000, 4000, 5000, 6000, 7000 ]
-
+history_len: [ 20 ]
+aggregator: [ 'mean' ]  # mean / user_attention
+mask_rate: [ 0.4 ]
 diff_weight: [0.5]
-lambda_user_emb: [0.001]
-aggregator: ['user_attention']   # mean, user_attention
-history_len: [40]
-mask_rate: [0.3]
-#log_model_suffix: hyper_cosine
+beta_sche: ['sqrt']
+lambda_user_emb: [0.0001]
 
 # hyperparameter search space
 hyper_parameters:
-  - "timesteps"
-  - "top_k_pos"
-  - "beta_sche"
-  - "T_w"
   - "training_stages.0.learning_rate"
-  - "diff_weight"
-  - "lambda_user_emb"
-  - "aggregator"
-  - "history_len"
-  - "mask_rate"
+  - 'history_len'
+  - 'aggregator'
+  - 'mask_rate'
+  - 'diff_weight'
+  - 'beta_sche'
+  - 'lambda_user_emb'

@@ -33,11 +33,13 @@ beta_end: 0.02
 log_model_suffix: warm
 
 # 4. Model Hyperparameter Grid Search Setting
-diff_weight: [ 0.5, 1, 2, 4, 6,8,10]
-beta_sche: ["linear", "exp", "cosine", "sqrt"]
+diff_weight: [ 0.5]
+lambda_user_emb: [0.001]
+beta_sche: ["sqrt"]
 
 # hyperparameter search space
 hyper_parameters:
   - "training_stages.0.learning_rate"
   - "diff_weight"
+  - "lambda_user_emb"
   - "beta_sche"

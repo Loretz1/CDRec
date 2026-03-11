@@ -30,23 +30,23 @@ modalities:
     emb_batch_size: 1024
     emb_dim: 3072
     emb_pca: 3072
-    item_emb_path: "/data/guqiwen/CDRec/data/Amazon2014/Sports_and_Outdoors+Clothing_Shoes_and_Jewelry/all_users/WarmValid0_WarmTest0_ColdValid0.1_ColdTest0.1_shuffle/modality_emb/CrossDomain_semantics_both_tag_final_emb_3072.npy"
+    item_emb_path: "/data/guqiwen/CDRec/data/Amazon2014/Cell_Phones_and_Accessories+Electronics/all_users/WarmValid0_WarmTest0_ColdValid0.1_ColdTest0.1_shuffle/modality_emb/CrossDomain_semantics_both_tag_final_emb_3072.npy"
     enabled: true
 
 # 3. Fixed Model Parameters Setting
 embedding_dim: 64
 timesteps: 20
 beta_start: 0.0001
-beta_end: 0.7
+beta_end: 0.5
 dropout: 0.3
 
 # 4. Model Hyperparameter Grid Search Setting
-diff_weight: [0.15]
+diff_weight: [2]
 beta_sche: ["sqrt"]
 lambda_user_emb: [1]
 aggregator: ['user_attention']   # mean, user_attention
-history_len: [150]
-mask_rate: [0.5]
+history_len: [40]
+mask_rate: [0.3]
 
 # hyperparameter search space
 hyper_parameters:

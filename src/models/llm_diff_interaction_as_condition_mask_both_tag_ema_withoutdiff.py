@@ -9,9 +9,9 @@ import numpy as np
 from multiprocessing import Pool, cpu_count
 import json
 
-class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban(GeneralRecommender):
+class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_withoutDiff(GeneralRecommender):
     def __init__(self, config, dataloader):
-        super(LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban, self).__init__(config, dataloader)
+        super(LLM_Diff_interaction_as_condition_mask_both_tag_EMA_withoutDiff, self).__init__(config, dataloader)
 
         self.config = config
         self.embedding_dim = config['embedding_dim']
@@ -60,8 +60,10 @@ class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban(GeneralRecommen
                 self.pseudo_ui_pairs.append((u, i))
 
         # 两个扩散模型，分别用于构建src/tgt适配的用户兴趣
-        self.diff_src = Diffusion(config)
-        self.diff_tgt = Diffusion(config)
+        # self.diff_src = Diffusion(config)
+        # self.diff_tgt = Diffusion(config)
+        self.diff_src = MLPBackbone(config)
+        self.diff_tgt = MLPBackbone(config)
 
         # EMA
         self.diff_tgt_ema = None
@@ -276,16 +278,7 @@ class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban(GeneralRecommen
             cond_src = self.src_interaction_agg(hist_src, u)
             cond_tgt = self.tgt_interaction_agg(hist_tgt, u)
 
-            # 固定的低噪声t
-            t = torch.zeros(users.size(0), dtype=torch.long, device=self.device)
-
-            _, u_denoised = self.diff_tgt_ema.p_losses(
-                x_start=u,
-                t=t,
-                cond_src=cond_src,
-                cond_tgt=cond_tgt,
-                loss_type="l2"
-            )
+            u_denoised = self.diff_tgt_ema(u, cond_src, cond_tgt)
 
             u_final = u + self.config["lambda_user_emb"] * u_denoised
 
@@ -338,10 +331,8 @@ class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban(GeneralRecommen
 
 
         # 这里t是随机采的，不是对称采样
-        B = u_src.size(0)
-        t_src = torch.randint(low=0, high=self.diff_src.timesteps, size=(B,), device=u_src.device)
-        diff_loss_src, u_src_denoised = self.diff_src.p_losses(x_start=u_src, t=t_src, cond_src=cond_src,
-                                                               cond_tgt=cond_tgt, loss_type="l2")
+        u_src_denoised = self.diff_src(u_src, cond_src, cond_tgt)
+        diff_loss_src = torch.tensor(0.0, device=u_src.device)
         u_src_final = u_src + self.config["lambda_user_emb"] * u_src_denoised # 残差连接
 
         pos_score_src = (u_src_final * i_pos_src).sum(dim=-1)
@@ -367,9 +358,8 @@ class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban(GeneralRecommen
         cond_tgt = self.tgt_interaction_agg(hist_tgt, u_tgt)
 
         B = u_tgt.size(0)
-        t_tgt = torch.randint(low=0, high=self.diff_tgt.timesteps, size=(B,), device=u_tgt.device)
-        diff_loss_tgt, u_tgt_denoised = self.diff_tgt.p_losses(x_start=u_tgt, t=t_tgt, cond_src=cond_src,
-                                                               cond_tgt=cond_tgt, loss_type="l2")
+        u_tgt_denoised = self.diff_tgt(u_tgt, cond_src, cond_tgt)
+        diff_loss_tgt = torch.tensor(0.0, device=u_src.device)
         u_tgt_final = u_tgt + self.config["lambda_user_emb"] * u_tgt_denoised # 残差连接
 
         pos_score_tgt = (u_tgt_final * i_pos_tgt).sum(dim=-1)
@@ -413,10 +403,7 @@ class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban(GeneralRecommen
             cond_src = self.src_interaction_agg(hist_src, u_pseudo)  # [Bp, D]
             cond_tgt = self.tgt_interaction_agg(hist_tgt, u_pseudo)  # [Bp, D]
             Bp = u_pseudo.size(0)
-            t_pseudo = torch.randint(low=0, high=self.diff_tgt.timesteps, size=(Bp,), device=u_pseudo.device)
-            diff_loss_pseudo, u_pseudo_denoised = self.diff_tgt.p_losses(
-                x_start=u_pseudo, t=t_pseudo, cond_src=cond_src, cond_tgt=cond_tgt, loss_type="l2"
-            )
+            u_pseudo_denoised = self.diff_tgt(u_pseudo, cond_src, cond_tgt)
             u_pseudo_final = u_pseudo + self.config["lambda_user_emb"] * u_pseudo_denoised  # 残差连接
 
             i_emb = self.emb_item_tgt(pseudo_items)  # [Bp, D]
@@ -427,11 +414,7 @@ class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban(GeneralRecommen
             pseudo_loss = self.bpr_loss(pos_score, neg_score)
 
         # loss = loss_rec + loss_dif + loss_pseudo
-        loss = (
-                bpr_loss_src
-                + bpr_loss_tgt
-                + self.diff_weight * (diff_loss_src + diff_loss_tgt)
-        )
+        loss = bpr_loss_src + bpr_loss_tgt
         if use_pseudo:
             loss = loss + self.config["pseudo_rec_weight"] * pseudo_loss
         return loss
@@ -456,7 +439,7 @@ class LLM_Diff_interaction_as_condition_mask_both_tag_EMA_douban(GeneralRecommen
 
         cond_src = self.src_interaction_agg(hist_src, u)
         cond_tgt = self.tgt_interaction_agg(hist_tgt, u)
-        _, u_denoised, _, _, _ = self.diff_tgt.sample(x_start=u, cond_src=cond_src, cond_tgt=cond_tgt)
+        u_denoised = self.diff_tgt(u, cond_src, cond_tgt)
 
         u_final = u + self.config["lambda_user_emb"] * u_denoised
 
@@ -671,6 +654,20 @@ class Diffusion(nn.Module):
 
         return x_start, x_t, x_quarter, x_half, x_three_quarter
 
+class MLPBackbone(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        dim = config['embedding_dim']
+
+        self.net = nn.Sequential(
+            nn.Linear(dim * 3, dim),
+            nn.ReLU(),
+            nn.Linear(dim, dim)
+        )
+
+    def forward(self, u, cond_src, cond_tgt):
+        x = torch.cat([u, cond_src, cond_tgt], dim=-1)
+        return self.net(x)
 
 # 🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂 交互物品emb聚合器 🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂
 
@@ -730,24 +727,52 @@ class InteractionAggregator(nn.Module):
 
 def _extract_item_profile(meta: dict) -> dict:
     """
-    从 metadata 中抽取适合给 LLM 的 item 描述
-    当前只使用 meta["labels"]
+    负责从 metadata 里抽取一个‘适合给 LLM 看’的 item 描述
+    缺失字段置为"None"
     """
-    labels_str = "None"
+    if meta is None:
+        return {
+            "title": "None",
+            "description": "None",
+            "categories": "None",
+            "price": "None",
+            "brand": "None",
+        }
 
-    if isinstance(meta, dict):
-        raw_labels = meta.get("labels")
-        if isinstance(raw_labels, str) and raw_labels.strip():
-            labels = [
-                l.strip()
-                for l in raw_labels.split("|")
-                if isinstance(l, str) and l.strip()
-            ]
-            if labels:
-                labels_str = ", ".join(labels)
+    # title
+    title = meta.get("title")
+    title = title if isinstance(title, str) and title.strip() else "None"
+
+    # description
+    description = meta.get("description")
+    description = description if isinstance(description, str) and description.strip() else "None"
+
+    # categories (flatten + deduplicate)
+    raw_categories = meta.get("categories")
+    categories = []
+    if isinstance(raw_categories, list):
+        for path in raw_categories:
+            if isinstance(path, list):
+                categories.extend([c for c in path if isinstance(c, str) and c.strip()])
+            elif isinstance(path, str) and path.strip():
+                categories.append(path)
+    categories = list(dict.fromkeys(categories))  # deduplicate, keep order
+    categories = ", ".join(categories) if categories else "None"
+
+    # price
+    price = meta.get("price")
+    price = str(price) if isinstance(price, (int, float)) else "None"
+
+    # brand
+    brand = meta.get("brand")
+    brand = brand if isinstance(brand, str) and brand.strip() else "None"
 
     return {
-        "labels": labels_str
+        "title": title, # String / "None" (都是字符串)
+        "description": description, # String / "None" (都是字符串)
+        "categories": categories, # String / "None" (都是字符串)
+        "price": price, # String / "None" (都是字符串)
+        "brand": brand, # String / "None" (都是字符串)
     }
 
 
@@ -822,7 +847,7 @@ def _user_domain_items_to_string(user_profile):
     if not user_profile:
         return "[]"
 
-    ordered_keys = ["labels", "review"]
+    ordered_keys = ["title", "description", "categories", "price", "brand", "review"]
 
     lines = ["["]
     for item in user_profile:
@@ -872,9 +897,9 @@ def _build_user_prompt_string(user_profile_string: dict) -> str:
         prompt_str (str)
     """
     return (
-        "INTERACTIONS FROM MUSIC:\n"
+        "INTERACTIONS FROM ELECTRONICS:\n"
         f"{user_profile_string['src']}\n\n"
-        "INTERACTIONS FROM BOOK:\n"
+        "INTERACTIONS FROM PHONES:\n"
         f"{user_profile_string['tgt']}"
     )
 
@@ -898,11 +923,7 @@ def _build_item_prompt_string(item_profile: dict) -> str:
     """
     Build user prompt for ONE item.
     """
-    return json.dumps(
-        item_profile,
-        indent=2,
-        ensure_ascii=False
-    )
+    return json.dumps(item_profile, indent=2)
 
 
 def _extract_string_list(text: str):
@@ -1470,99 +1491,117 @@ def generate_CrossDomain_semantics_both_tag_final_embs(config, modality, interac
 
 # 需要针对不同src+tgt，修改源域，目标域的说明:The source domain focuses on
 CROSSDOMAIN_USER_SYSTEM_PROMPT = """
-你是一名推荐系统领域的专家。
-你的任务是根据用户在两个不同类别商品上的交互行为，总结该用户的整体兴趣偏好。
-一类是图书相关商品，另一类是音乐相关商品。
+You are an expert in recommendation systems.
+Your task is to summarize a user's interests based on their interactions with items from two different types of product categories.
+One category is about electronics.
+The other category is about cell phones and accessories.
 
-我将提供以下信息：
-INTERACTIONS FROM MUSIC: 音乐领域的用户交互列表.
-INTERACTIONS FROM BOOK: 图书领域的用户交互列表.
+The information I will give you:
+INTERACTIONS FROM ELECTRONICS: A LIST of user interactions with items related to electronics.
+INTERACTIONS FROM PHONES: A LIST of user interactions with items related to cell phones and accessories.
 
-每条交互以 JSON 格式给出，包含以下字段（缺失字段以 "None" 表示）：
+Each interaction is described in JSON format with the following attributes, where missing values are set to "None".
+The attributes include the item's information and the user's review on that item:
 {
-  "labels": "用于描述该商品的若干标签"
-  "review": "用户对该商品的评论"
+  "title": "the name of the item"
+  "description": "a description of the item"
+  "categories": "several tags describing the item"
+  "price": "the price of the item"
+  "brand": "the brand of the item"
+  "review": "the user's review on the item"
 }
 
-要求：
-1. 从用户的所有交互中，提炼一组高层次、抽象的用户兴趣标签。
-   标签应反映用户的：
-   - 情绪态度，
-   - 价值取向，
-   - 审美或风格偏好，
-   - 对体验或品质的总体期待，
-   这些信息应综合商品标签和用户评论进行推断。
-   不要描述或包含以下内容：
-   - 具体商品名称，
-   - 商品类别或领域名称，
-   - 功能、材料、使用场景，
-   - 任何具体的物品对象。
-2. 只输出一个标签列表，格式如下：["标签1", "标签2", "标签3", "..."]
-   - 每个标签通常为 1–2 个词（最多不超过 3 个词）；
-   - 标签数量为 2–4 个。
-3. 除标签列表外，不要输出任何其他文字。
-"""
-
-
-
-TGT_ITEM_SYSTEM_PROMPT = """
-你是一名推荐系统领域的专家。
-你的任务是分析一个与图书相关的单个商品，并总结该商品可能吸引的用户类型。
-
-我将提供该商品的元数据，格式为 JSON，
-其中缺失字段统一以 "None" 表示：
-{
-  "labels": "若干用于描述该商品的标签"
-}
-
-要求：
-1. 推断能够描述“哪些类型的用户可能喜欢该商品”的高层次用户偏好标签。
-   标签应反映用户的抽象倾向，例如：
-   - 情绪或情感取向，
-   - 审美或风格偏好，
-   - 对内容表达或整体品质的期待，
-   - 文化取向或价值观层面的偏好。
-   不要提及或描述以下内容：
-   - 具体商品名称、作者或艺术家，
-   - 品牌、厂商或出版信息，
-   - 商品或领域类别名称，
-   - 具体情节、主题或使用场景，
-   - 任何具体的实体对象。
-2. 只输出一个标签列表，格式如下：["标签1", "标签2", "标签3", "..."]
-   - 每个标签通常为 1–2 个词（最多不超过 3 个词）；
-   - 标签数量为 2–4 个。
-3. 除标签列表外，不要输出任何其他文字。
+Requirements:
+1. Extract a set of high-level, abstract user preference tags from the user's interactions.
+   The tags should reflect:
+   - emotional attitudes,
+   - value orientations,
+   - comfort or reliability expectations,
+   - lifestyle or usage preferences,
+   as inferred from item attributes and user reviews.
+   Do NOT describe:
+   - specific products,
+   - item categories,
+   - functions,
+   - materials,
+   - usage scenarios,
+   or any concrete physical objects.
+2. Output only a list of tags, following this structure: ["tag1", "tag2", "tag3", "..."]
+    - tags must be: typically 1–2 words (at most 3)
+    - the number of tags should be 2-4
+3. Do not provide any other text outside the list.
 """
 
 
 
 SRC_ITEM_SYSTEM_PROMPT = """
-你是一名推荐系统领域的专家。
-你的任务是分析一个与音乐相关的单个商品，并总结该商品可能吸引的用户类型。
+You are an expert in recommendation systems.
+Your task is to analyze ONE product item related to electronics,
+and summarize what types of users this item is likely to attract.
 
-我将提供该商品的元数据，格式为 JSON，
-其中缺失字段统一以 "None" 表示：
+The information I will give you is the item's metadata in JSON format,
+where any missing field is set to "None":
 {
-  "labels": "若干用于描述该商品的标签"
+  "title": "item name",
+  "description": "item description",
+  "categories": "category tags",
+  "price": "price",
+  "brand": "brand"
 }
 
-要求：
-1. 推断能够描述“哪些类型的用户可能喜欢该商品”的高层次用户偏好标签。
-   标签应反映用户的抽象倾向，例如：
-   - 情绪或情感取向，
-   - 审美或风格偏好，
-   - 对内容表达或整体品质的期待，
-   - 文化取向或价值观层面的偏好。
-   不要提及或描述以下内容：
-   - 具体商品名称、作者或艺术家，
-   - 品牌、厂商或出版信息，
-   - 商品或领域类别名称，
-   - 具体情节、主题或使用场景，
-   - 任何具体的实体对象。
-2. 只输出一个标签列表，格式如下：["标签1", "标签2", "标签3", "..."]
-   - 每个标签通常为 1–2 个词（最多不超过 3 个词）；
-   - 标签数量为 2–4 个。
-3. 除标签列表外，不要输出任何其他文字。
+Requirements:
+1. Infer high-level user preference tags that describe what kinds of users may like this item.
+   Tags should reflect abstract user tendencies such as:
+   - style orientation,
+   - comfort or quality expectations,
+   - value sensitivity,
+   - lifestyle or aesthetic preferences.
+   Do NOT mention:
+   - specific product names,
+   - brands,
+   - materials,
+   - item categories,
+   - concrete usage scenarios.
+2. Output ONLY a list of tags, following this format: ["tag1", "tag2", "tag3", "..."]
+   - tags must be: typically 1–2 words (at most 3)
+   - the number of tags should be 2–4
+3. Do not provide any other text outside the list.
+"""
+
+
+
+TGT_ITEM_SYSTEM_PROMPT = """
+You are an expert in recommendation systems.
+Your task is to analyze ONE product item related to cell phones and accessories,
+and summarize what types of users this item is likely to attract.
+
+The information I will give you is the item's metadata in JSON format,
+where any missing field is set to "None":
+{
+  "title": "item name",
+  "description": "item description",
+  "categories": "category tags",
+  "price": "price",
+  "brand": "brand"
+}
+
+Requirements:
+1. Infer high-level user preference tags that describe what kinds of users may like this item.
+   Tags should reflect abstract user tendencies such as:
+   - performance orientation,
+   - durability or reliability expectations,
+   - activity intensity preferences,
+   - outdoor or fitness lifestyle traits.
+   Do NOT mention:
+   - specific product names,
+   - brands,
+   - materials,
+   - item categories,
+   - concrete usage scenarios.
+2. Output ONLY a list of tags, following this format: ["tag1", "tag2", "tag3", "..."]
+   - tags must be: typically 1–2 words (at most 3)
+   - the number of tags should be 2–4
+3. Do not provide any other text outside the list.
 """
 
 

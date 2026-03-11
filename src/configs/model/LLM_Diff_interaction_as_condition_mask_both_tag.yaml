@@ -20,7 +20,7 @@ training_stages:
     epochs: 1000
     train_batch_size: 2048
     learner: adam
-    learning_rate: [0.001, 0.01]
+    learning_rate: [0.001]
     learning_rate_scheduler: [1.0, 50]
     weight_decay: 0
 
@@ -37,21 +37,22 @@ modalities:
 embedding_dim: 64
 timesteps: 20
 beta_start: 0.0001
-beta_end: 0.02
+beta_end: 0.7
 dropout: 0.3
-top_k_pos: 5                  # 每个 src-only 用户生成多少个 tgt 伪正
-pseudo_start_epoch: 10         # 从第 T 个 epoch 开始用伪交互
-pseudo_num_per_batch: 64        # 每个 batch 里伪交互采样个数
-pseudo_rec_weight: 0.5         # 伪交互 rec loss 权重
-#log_model_suffix: warm
+
+top_k_pos: 1                  # 每个 src-only 用户生成多少个 tgt 伪正
+pseudo_start_epoch: 3        # 从第 T 个 epoch 开始用伪交互
+pseudo_num_per_batch: 16        # 每个 batch 里伪交互采样个数
+pseudo_rec_weight: 0.001         # 伪交互 rec loss 权重
+log_model_suffix: ablation2
 
 # 4. Model Hyperparameter Grid Search Setting
-diff_weight: [0.5, 1, 2, 4, 6,8,10]
-beta_sche: ["exp", "cosine", "sqrt"]
-lambda_user_emb: [0.001, 0.1, 0.5, 1, 1.5]
+diff_weight: [0.15]
+beta_sche: ["sqrt"]
+lambda_user_emb: [1]
 aggregator: ['user_attention']   # mean, user_attention
-history_len: [40]
-mask_rate: [0.3]
+history_len: [150]
+mask_rate: [0.5]
 
 # hyperparameter search space
 hyper_parameters:

@@ -45,6 +45,8 @@ log_model_suffix: warm
 diff_weight: [ 0.5, 1, 2, 4, 6,8,10]
 lambda_user_emb: [1]
 beta_sche: ["sqrt"]
+contrastive_weight: [0.05, 0.1]
+tau: [0.05]
 
 # hyperparameter search space
 hyper_parameters:
@@ -52,3 +54,5 @@ hyper_parameters:
   - "diff_weight"
   - "lambda_user_emb"
   - "beta_sche"
+  - "contrastive_weight"
+  - "tau"

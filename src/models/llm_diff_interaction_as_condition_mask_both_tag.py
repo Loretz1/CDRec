@@ -818,9 +818,9 @@ def _build_user_prompt_string(user_profile_string: dict) -> str:
         prompt_str (str)
     """
     return (
-        "INTERACTIONS FROM SPORTS:\n"
+        "INTERACTIONS FROM BABY:\n"
         f"{user_profile_string['src']}\n\n"
-        "INTERACTIONS FROM CLOTHING:\n"
+        "INTERACTIONS FROM HEALTH:\n"
         f"{user_profile_string['tgt']}"
     )
 
@@ -1350,12 +1350,12 @@ def generate_CrossDomain_semantics_both_tag_final_embs(config, modality, interac
 CROSSDOMAIN_USER_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
 Your task is to summarize a user's interests based on their interactions with items from two different types of product categories.
-One category is about sports and outdoors.
-The other category is about clothing, shoes and jewelry.
+One category is about baby.
+The other category is about health and personal care.
 
 The information I will give you:
-INTERACTIONS FROM SPORTS: A LIST of user interactions with items related to clothing, shoes and jewelry.
-INTERACTIONS FROM CLOTHING: A LIST of user interactions with items related to sports and outdoors.
+INTERACTIONS FROM BABY: A LIST of user interactions with items related to baby.
+INTERACTIONS FROM HEALTH: A LIST of user interactions with items related to health and personal care.
 
 Each interaction is described in JSON format with the following attributes, where missing values are set to "None".
 The attributes include the item's information and the user's review on that item:
@@ -1391,9 +1391,9 @@ Requirements:
 
 
 
-TGT_ITEM_SYSTEM_PROMPT = """
+SRC_ITEM_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
-Your task is to analyze ONE product item related to clothing, shoes, and jewelry,
+Your task is to analyze ONE product item related to baby,
 and summarize what types of users this item is likely to attract.
 
 The information I will give you is the item's metadata in JSON format,
@@ -1427,9 +1427,9 @@ Requirements:
 
 
 
-SRC_ITEM_SYSTEM_PROMPT = """
+TGT_ITEM_SYSTEM_PROMPT = """
 You are an expert in recommendation systems.
-Your task is to analyze ONE product item related to sports and outdoors,
+Your task is to analyze ONE product item related to health and personal care,
 and summarize what types of users this item is likely to attract.
 
 The information I will give you is the item's metadata in JSON format,
